@@ -21,7 +21,7 @@ concurrency:
 jobs:
   build:
     name: Build and package arm64-v8a module
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Store ZIP DOS timestamps in the maintainer's timezone so Android tools,
     # which ignore the UT extra field, do not show them eight hours behind.
     env:
