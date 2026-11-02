@@ -28,7 +28,9 @@ class BootTests(unittest.TestCase):
 shift 4
 exec "$@"
 ''')
-                tool('cmd', '''n=$(cat "$LH_TEST_BASE/attempts" 2>/dev/null || echo 0)
+                tool('cmd', '''# Binder's remote system_server must receive a pipe, not a private file.
+[ -p /proc/self/fd/1 ] || exit 2
+n=$(cat "$LH_TEST_BASE/attempts" 2>/dev/null || echo 0)
 n=$((n+1)); echo "$n" > "$LH_TEST_BASE/attempts"
 if [ "$LH_TEST_READY" = 1 ] && [ "$n" -ge 2 ]; then
   printf 'package:com.android.settings\npackage:android\npackage:android\n'

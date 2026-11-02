@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.0-preview.3
+
+- Fix system-package snapshot creation under enforcing SELinux: capture `cmd package` output through a pipe instead of passing a private `/dev` output file to system_server.
+- Add a boot regression that rejects regular-file stdout on the mocked Binder command, reproducing the device failure.
+- Device check on Android 16 / EvoX with BakaSU/SUSFS 2.3.0: snapshot ready (495 packages), hooks active in Duck main/helper processes, package/service/reflection/native-file checks clean after repair.
+- Duck still reports one framework-resource mapping heuristic from existing ROM overlays/idmap; this release does not claim to remove that signal.
+
 ## 3.0.0-preview.2
 
 - Copy Binder-owned service replies into writable Parcel storage before changing matched strings; skip edits if allocation fails.

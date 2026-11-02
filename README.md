@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 A configurable fork of [null07089/Lineage_Hide](https://github.com/null07089/Lineage_Hide), adding an offline KernelSU WebUI, editable LineageOS / Evolution X presets, per-package scope, channel controls and a native SUSFS path backend. GPL-3.0; upstream attribution is retained.
 
-**3.0.0-preview.2:** arm64 compilation, native host tests and browser integration are covered. Android injection, SELinux access and ROM compatibility still require device validation. A ready system-package snapshot is not evidence that hooks are active in a target app.
+**3.0.0-preview.3:** arm64 compilation, native host tests and browser integration are covered. An Android 16/EvoX check confirmed injection after fixing a SELinux-related startup failure; one framework-overlay mapping signal remains. Wider device/ROM compatibility still requires validation. A ready system-package snapshot is not evidence that hooks are active in a target app.
 
 ## Use
 
