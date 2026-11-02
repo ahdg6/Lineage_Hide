@@ -14,4 +14,4 @@ Kernel registration is additive for the current boot, not transactional. A failu
 
 App allow/deny lists only govern the Zygisk hooks. They cannot remove a package from the kernel's path policy. Actual kernel filtering depends on the supported kernel and root-manager unmount policy. This fork does not claim that system applications or excluded packages universally retain original file views.
 
-Host tests cover parser/path validation, filesystem scanning, link skipping, bounds and unsupported-backend behavior. They deliberately never execute a phone's root daemon. Real `ksud` execution, SELinux access and app-visible results remain part of device validation.
+Host tests cover parser/path validation, filesystem scanning, link skipping, bounds and unsupported-backend behavior. The production command-runner code is also tested against a local substitute executable for argument preservation, exit status, output limits, closed pipes, deadlines and descendant cleanup. They deliberately never execute a phone's root daemon. Real `ksud` execution, SELinux access and app-visible results remain part of device validation.

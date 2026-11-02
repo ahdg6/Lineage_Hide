@@ -41,6 +41,6 @@ bool save_config(const Config &config, std::string &error);
 // Set once in the forked process before installing hooks; immutable afterwards.
 const Config &active_config();
 void set_active_config(Config config);
+bool resource_id_matches(uint32_t resource_id);
 bool feature_length_matches(size_t length);
-bool broadcast_length_matches(size_t length);
 } // namespace lh

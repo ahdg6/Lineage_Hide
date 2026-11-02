@@ -3,6 +3,7 @@
 #include <bitset>
 #include <cerrno>
 #include <cstring>
+#include <cstdlib>
 #include <fcntl.h>
 #include <map>
 #include <set>
@@ -13,7 +14,7 @@
 namespace lh {
 namespace {
 Config current;
-std::bitset<256> feature_lengths, broadcast_lengths;
+std::bitset<256> feature_lengths, resource_ids;
 bool token(std::string_view s, size_t max) {
     return !s.empty() && s.size() <= max && std::all_of(s.begin(), s.end(), [](char c) {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
@@ -153,6 +154,8 @@ bool parse_config(std::string_view text, Config &out, std::string &error) {
     }
     for (const auto &flag : flags) if (!seen.count(flag.first)) return fail("Missing key: " + flag.first);
     for (const char *key : {"schema", "profile", "mode"}) if (!seen.count(key)) return fail(std::string("Missing key: ") + key);
+    // Canonical output may gain a final newline compared with an imported file.
+    if (serialize_config(c).size() > kMaxConfigBytes) return fail("Canonical configuration exceeds 65536 bytes");
     out = std::move(c);
     error.clear();
     return true;
@@ -234,6 +237,8 @@ bool load_config(Config &out, std::string &error) {
 }
 
 bool save_config(const Config &c, std::string &error) {
+    const auto data = serialize_config(c);
+    if (data.size() > kMaxConfigBytes) { error = "Configuration exceeds 65536 bytes"; return false; }
     if (mkdir(kStateDir, 0700) < 0 && errno != EEXIST) { error = "Cannot create state directory"; return false; }
     struct stat st{};
     if (lstat(kStateDir, &st) < 0 || !S_ISDIR(st.st_mode) || st.st_uid != geteuid() || (st.st_mode & 0022)) {
@@ -242,7 +247,6 @@ bool save_config(const Config &c, std::string &error) {
     std::string pattern = std::string(kStateDir) + "/.config.XXXXXX";
     int fd = mkstemp(pattern.data());
     if (fd < 0) { error = "Cannot create temporary configuration"; return false; }
-    auto data = serialize_config(c);
     size_t pos = 0;
     bool ok = fchmod(fd, 0600) == 0;
     while (ok && pos < data.size()) {
@@ -261,11 +265,11 @@ bool save_config(const Config &c, std::string &error) {
 }
 const Config &active_config() { return current; }
 void set_active_config(Config c) {
-    feature_lengths.reset(); broadcast_lengths.reset();
+    feature_lengths.reset(); resource_ids.reset();
+    for (const auto &id : c.resource_ids) resource_ids.set(std::strtoul(id.c_str(), nullptr, 16));
     for (const auto &name : c.feature_names) if (name.size() < 256) feature_lengths.set(name.size());
-    for (const auto &name : c.broadcast_actions) if (name.size() < 256) broadcast_lengths.set(name.size());
     current = std::move(c);
 }
+bool resource_id_matches(uint32_t id) { return current.resources && resource_ids[id >> 24]; }
 bool feature_length_matches(size_t length) { return length < 256 && feature_lengths[length]; }
-bool broadcast_length_matches(size_t length) { return length < 256 && broadcast_lengths[length]; }
 } // namespace lh

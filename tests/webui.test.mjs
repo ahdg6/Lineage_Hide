@@ -34,7 +34,7 @@ await page.exposeFunction('nativeExec', command => {
     const p = spawnSync('/bin/sh', ['-c', `'${ctl}' ` + command.slice(prefix.length)], {encoding:'utf8'});
     return {errno:p.status, stdout:p.stdout, stderr:p.stderr};
   }
-  assert.match(command, /^\/system\/bin\/cmd package list packages -3 --user /);
+  assert.ok(command.startsWith("/system/bin/toybox timeout -s KILL 10 /system/bin/sh -c '/system/bin/cmd package list packages -3 --user "));
   return {errno:0, stdout:'package:org.example.alpha\npackage:org.example.beta\n', stderr:''};
 });
 await page.addInitScript(() => { window.ksu = {exec(command, options, callback) {

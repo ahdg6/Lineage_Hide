@@ -92,7 +92,7 @@ $('load-preset').addEventListener('click', () => run(async () => {
   paint(next); message('预设规则已载入草稿；应用名单和全局开关保留。点击保存后生效。');
 }));
 $('load-apps').addEventListener('click', () => run(async () => {
-  const output = await exec('/system/bin/cmd package list packages -3 --user "$(/system/bin/am get-current-user)"');
+  const output = await exec('/system/bin/toybox timeout -s KILL 10 /system/bin/sh -c \'/system/bin/cmd package list packages -3 --user "$(/system/bin/am get-current-user)"\'');
   installed = [...new Set(output.split(/\r?\n/).filter(x => x.startsWith('package:')).map(x => x.slice(8)))]
     .filter(x => /^[a-zA-Z_][\w]*(\.[a-zA-Z_][\w]*)+$/.test(x)).sort();
   $('app-picker').hidden = false; renderApps();

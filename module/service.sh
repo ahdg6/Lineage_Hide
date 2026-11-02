@@ -16,8 +16,8 @@ esac
 "$CTL" init "$profile" >/dev/null || exit 1
 # No fallback injection while PackageManager is unavailable. Retry <= 3 min.
 attempt=0
-while [ "$attempt" -lt 90 ]; do
-    if /system/bin/cmd package list packages -s > "$RUNTIME/packages.raw" 2>/dev/null; then
+while [ "$attempt" -lt 60 ]; do
+    if /system/bin/toybox timeout -s KILL 2 /system/bin/cmd package list packages -s > "$RUNTIME/packages.raw" 2>/dev/null; then
         sed -n 's/^package://p' "$RUNTIME/packages.raw" | sort -u > "$RUNTIME/packages.tmp"
         if grep -qx android "$RUNTIME/packages.tmp"; then
             chmod 0600 "$RUNTIME/packages.tmp"
@@ -26,7 +26,7 @@ while [ "$attempt" -lt 90 ]; do
         fi
     fi
     attempt=$((attempt + 1))
-    sleep 2
+    sleep 1
 done
 rm -f "$RUNTIME/packages.raw" "$RUNTIME/packages.tmp"
 "$CTL" apply-paths || echo 'SUSFS path application failed; see KernelSU WebUI status'

@@ -4,7 +4,7 @@
 
 基于 [null07089/Lineage_Hide](https://github.com/null07089/Lineage_Hide) 的可配置 fork。提供 KernelSU WebUI、LineageOS / Evolution X 预设、应用黑白名单、自定义进程内规则及原生 SUSFS 路径后端。保留上游 GPL-3.0 许可证及作者署名。
 
-**当前版本：3.0.0-preview.1。** 已完成 arm64 编译、主机 native 测试及浏览器与真实配置工具的联调；尚未完成 Android 实机注入、SELinux 可达性和 ROM 兼容性验收。WebUI 的“清单就绪”只表示启动清单存在，不代表目标应用已成功安装 hooks。
+**当前版本：3.0.0-preview.2。** 已完成 arm64 编译、主机 native 测试及浏览器与真实配置工具的联调；尚未完成 Android 实机注入、SELinux 可达性和 ROM 兼容性验收。WebUI 的“清单就绪”只表示启动清单存在，不代表目标应用已成功安装 hooks。
 
 ## 使用
 
@@ -40,7 +40,7 @@ UI 使用 [KernelSU WebUI 接口](https://kernelsu.org/guide/module-webui.html)�
 
 LineageOS 预设包含上游 Lineage 服务、SDK 特性、广播、资源和反射规则。EvoX 以相同 SDK 规则为基础，增加 `evolution` / `evox` 服务关键词；这些是可编辑起点，不表示每个 ROM 版本都存在对应服务，也不代表覆盖了所有 EvoX 特征。原版其他 ROM 关键词可在自定义规则中自行添加。
 
-进程内 Binder/JNI 边界沿用上游：不原地修改 Binder reply，不关闭资源系统持有的 fd。原生路径与映射使用下方独立的 SUSFS 后端；其他原生扫描与硬件证明不由进程内 hooks 解决。应用名单不会改变 SUSFS、内核补丁或其他模块的作用范围。
+服务列表过滤先让 Parcel 复制 Binder reply 到自有缓冲区，再修改匹配项；feature 读取只替换返回字符串，不写 reply 字节。广播只处理 Intent.action，不改 extras。不关闭资源系统持有的 fd。原生路径与映射使用下方独立的 SUSFS 后端；其他原生扫描与硬件证明不由进程内 hooks 解决。应用名单不会改变 SUSFS、内核补丁或其他模块的作用范围。
 
 ## 原生 SUSFS 路径
 
@@ -78,6 +78,7 @@ bash scripts/build-native.sh /absolute/path/to/android-ndk-r27c
 直接 native 构建不需要 JDK、Gradle 或完整 SDK。保留 Gradle 工程作为可选入口；若使用 Gradle，需将同时含 `liblineage_hide.so` 和 `configctl` 的构建目录传给 `scripts/package.sh`。仅打包 arm64，最低链接 API 26 不等同所有 Android 版本都已验证。
 
 ```sh
+export JNI_HEADER=/absolute/path/to/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/jni.h
 python3 -m unittest discover -s tests -v
 npm ci
 npx playwright install chromium
@@ -85,6 +86,6 @@ npm test
 # 已有 Chromium 可使用 CHROMIUM_PATH=/path/to/chromium npm test
 ```
 
-测试覆盖解析边界、原子保存、升级保留、多用户 appId、黑白名单、系统保护、配置损坏、companion 帧、过滤规则、路径计划、越界/链接拒绝及 UI 保存/导入/导出/错误处理。C++ 测试启用 ASan / UBSan。浏览器联调执行主机版配置工具，模拟 KernelSU 桥及应用清单；不替代 Android 端验收。实机检查项见 [DEVICE-VALIDATION.md](docs/DEVICE-VALIDATION.md)。
+测试覆盖解析边界、原子保存、升级保留、多用户 appId、黑白名单、系统保护、配置损坏、companion 帧、过滤规则、路径计划、越界/链接拒绝及 UI 保存/导入/导出/错误处理。C++ 测试启用 ASan / UBSan。新增 JNI/Parcel 模拟层执行实际 hook 代码，覆盖回复缓冲区归属、内存分配失败、跨接口事务号冲突、广播编码与附加数据、反射范围及资源 hook 部分安装；命令执行器测试覆盖输出限制、超时和子进程清理，启动脚本测试隔离所有设备路径。模拟层不代替真实 Binder / ART。浏览器联调执行主机版配置工具，模拟 KernelSU 桥及应用清单；不替代 Android 端验收。实机检查项见 [DEVICE-VALIDATION.md](docs/DEVICE-VALIDATION.md)。
 
 预览构建不含自动更新地址，避免意外更新回上游无配置版本。tag 发布构建使用当前 fork 的更新地址；不使用上游 Release manifest。

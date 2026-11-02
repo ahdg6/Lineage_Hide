@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 A configurable fork of [null07089/Lineage_Hide](https://github.com/null07089/Lineage_Hide), adding an offline KernelSU WebUI, editable LineageOS / Evolution X presets, per-package scope, channel controls and a native SUSFS path backend. GPL-3.0; upstream attribution is retained.
 
-**3.0.0-preview.1:** arm64 compilation, native host tests and browser integration are covered. Android injection, SELinux access and ROM compatibility still require device validation. A ready system-package snapshot is not evidence that hooks are active in a target app.
+**3.0.0-preview.2:** arm64 compilation, native host tests and browser integration are covered. Android injection, SELinux access and ROM compatibility still require device validation. A ready system-package snapshot is not evidence that hooks are active in a target app.
 
 ## Use
 
@@ -37,7 +37,7 @@ Editable channels:
 
 The LineageOS preset contains the upstream Lineage SDK rules. EvoX inherits these rules and adds `evolution` / `evox` service substrings. These are editable starting rules, not evidence that all ROM versions expose those services or that every EvoX signal is covered. Other upstream ROM keywords can be added manually.
 
-The original process-local Binder/JNI design remains: no in-place Binder reply writes or closing resource-owned descriptors. Native paths/maps use the separate SUSFS adapter below; other native scanning and hardware attestation remain outside the process hooks' scope. The package list does not control SUSFS, kernel patches or other modules.
+Process-local Binder/JNI hooks copy matched service replies into Parcel-owned storage before editing them; feature reads substitute returned strings without writing reply bytes. Resource-owned descriptors are never closed. Broadcast filtering targets only Intent.action and leaves extras unchanged. Native paths/maps use the separate SUSFS adapter below; other native scanning and hardware attestation remain outside the process hooks' scope. The package list does not control SUSFS, kernel patches or other modules.
 
 ## Native SUSFS paths
 
@@ -75,6 +75,7 @@ bash scripts/build-native.sh /absolute/path/to/android-ndk-r27c
 The direct native build needs no Gradle, JDK or full SDK. The optional Gradle project also builds both targets; pass the directory containing `liblineage_hide.so` and `configctl` to `scripts/package.sh`. Only arm64 is packaged. API 26 is the minimum link target, not a tested Android compatibility guarantee.
 
 ```sh
+export JNI_HEADER=/absolute/path/to/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/jni.h
 python3 -m unittest discover -s tests -v
 npm ci
 npx playwright install chromium
@@ -82,6 +83,6 @@ npm test
 # Or CHROMIUM_PATH=/path/to/chromium npm test
 ```
 
-Host tests cover parser bounds, persistence, upgrades, app scope, multi-user UIDs, protected packages, invalid snapshots, companion framing and filtering. Native tests use ASan/UBSan. Browser integration runs the real host configuration tool behind a simulated KernelSU bridge, with a mocked app list. It does not substitute for [device validation](docs/DEVICE-VALIDATION.md).
+Host tests cover parser bounds, persistence, upgrades, app scope, multi-user UIDs, protected packages, invalid snapshots, companion framing and filtering. Native tests use ASan/UBSan. A fake JNI/Parcel harness executes the actual hook code for reply ownership, allocation failure, interface transaction collisions, broadcast encodings/extras, reflection scope and partial resource installation. The command-runner tests use a local fake executable to exercise output limits, timeouts and child cleanup. Boot-script tests isolate all device paths. These fixtures do not simulate Android Binder or ART internals. Browser integration runs the real host configuration tool behind a simulated KernelSU bridge, with a mocked app list. It does not substitute for [device validation](docs/DEVICE-VALIDATION.md).
 
 Preview builds omit automatic updates to prevent replacement by an upstream release. Tagged builds use this fork's own update manifest. Original kernel patch helpers remain under `scripts/`; they are not configured by the WebUI.

@@ -17,7 +17,9 @@
 namespace lh {
 namespace {
 constexpr size_t kMaxPaths = 512, kMaxEntries = 100000;
-#ifndef LH_HOST_TEST
+#ifdef LH_RUNNER_TEST
+constexpr const char *kKsud = "/proc/self/exe";
+#elif !defined(LH_HOST_TEST)
 constexpr const char *kKsud = "/data/adb/ksud";
 #endif
 using Clock = std::chrono::steady_clock;
@@ -125,18 +127,22 @@ bool write_runtime(const char *name, const std::string &text) {
     return ok;
 }
 
-#ifndef LH_HOST_TEST
+#if !defined(LH_HOST_TEST) || defined(LH_RUNNER_TEST)
 bool run_ksud(const std::vector<std::string> &args, std::string &output,
               Clock::time_point deadline, std::string &error) {
     if (Clock::now() >= deadline) { error = "Path operation exceeded 60-second budget"; return false; }
     int pipefd[2];
     if (pipe2(pipefd, O_CLOEXEC) < 0) { error = "Cannot create command pipe"; return false; }
+    if (fcntl(pipefd[0], F_SETFL, O_NONBLOCK) < 0) {
+        close(pipefd[0]); close(pipefd[1]); error = "Cannot make command pipe nonblocking"; return false;
+    }
     pid_t child = fork();
     if (child < 0) { close(pipefd[0]); close(pipefd[1]); error = "Cannot start ksud"; return false; }
     if (child == 0) {
-        setpgid(0, 0);
+        if (setpgid(0, 0) < 0) _exit(126);
         close(pipefd[0]);
-        dup2(pipefd[1], STDOUT_FILENO); dup2(pipefd[1], STDERR_FILENO); close(pipefd[1]);
+        if (dup2(pipefd[1], STDOUT_FILENO) < 0 || dup2(pipefd[1], STDERR_FILENO) < 0) _exit(126);
+        close(pipefd[1]);
         std::vector<char *> argv;
         argv.push_back(const_cast<char *>(kKsud));
         for (const auto &arg : args) argv.push_back(const_cast<char *>(arg.c_str()));
@@ -146,7 +152,6 @@ bool run_ksud(const std::vector<std::string> &args, std::string &output,
     }
     close(pipefd[1]);
     setpgid(child, child);
-    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
     auto end = std::min(deadline, Clock::now() + std::chrono::seconds(8));
     output.clear();
     int status = 0;
@@ -168,7 +173,12 @@ bool run_ksud(const std::vector<std::string> &args, std::string &output,
         }
         if (failed || (finished && n == 0)) break;
         if (Clock::now() >= end) { error = "ksud command timed out"; failed = true; break; }
-        pollfd ready{pipefd[0], POLLIN | POLLHUP, 0}; poll(&ready, 1, 20);
+        // A child can close stdout/stderr before exiting. Polling a closed
+        // pipe would spin on POLLHUP for the remainder of the timeout.
+        pollfd ready{pipefd[0], POLLIN | POLLHUP, 0};
+        if (poll(n == 0 ? nullptr : &ready, n == 0 ? 0 : 1, 20) < 0 && errno != EINTR) {
+            error = "Cannot poll ksud output"; failed = true; break;
+        }
     }
     if (failed) kill(-child, SIGKILL);
     if (!finished) { kill(-child, SIGKILL); kill(child, SIGKILL); while (waitpid(child, &status, 0) < 0 && errno == EINTR) {} }
@@ -178,6 +188,9 @@ bool run_ksud(const std::vector<std::string> &args, std::string &output,
     return true;
 }
 
+#endif
+
+#ifndef LH_HOST_TEST
 std::string trim(std::string s) {
     const auto first = s.find_first_not_of(" \t\r\n"), last = s.find_last_not_of(" \t\r\n");
     return first == std::string::npos ? std::string() : s.substr(first, last - first + 1);

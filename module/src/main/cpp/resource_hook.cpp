@@ -1,7 +1,6 @@
 #include "resource_hook.h"
 #include "config.h"
 #include <algorithm>
-#include <cstdlib>
 
 #include <cstdint>
 #include <cstring>
@@ -22,10 +21,7 @@ GetResourceNameFn g_original_entry_name = nullptr;
 bool g_resource_hook_installed = false;
 
 bool is_lineage_resource_id(jint res_id) {
-    const auto id = static_cast<uint32_t>(res_id) >> 24;
-    for (const auto &value : lh::active_config().resource_ids)
-        if (id == std::strtoul(value.c_str(), nullptr, 16)) return true;
-    return false;
+    return lh::resource_id_matches(static_cast<uint32_t>(res_id));
 }
 
 bool is_lineage_def_package(JNIEnv *env, jstring def_package) {
@@ -109,10 +105,6 @@ bool install_resource_hook(JNIEnv *env, zygisk::Api *api) {
         took_original(methods[0].fnPtr, reinterpret_cast<void *>(hook_get_resource_identifier));
     const bool value_ready =
         took_original(methods[1].fnPtr, reinterpret_cast<void *>(hook_get_resource_value));
-    if (!identifier_ready && !value_ready) {
-        log_error("AssetManager resource hook unavailable; lineage resources stay visible");
-        return false;
-    }
     if (identifier_ready) {
         g_original_identifier = reinterpret_cast<GetResourceIdentifierFn>(methods[0].fnPtr);
     }
@@ -136,7 +128,14 @@ bool install_resource_hook(JNIEnv *env, zygisk::Api *api) {
         g_original_entry_name = reinterpret_cast<GetResourceNameFn>(methods[5].fnPtr);
     }
 
-    g_resource_hook_installed = true;
+    // Even a names-only partial installation must retain its originals.
+    // Otherwise those installed callbacks would return null for every resource.
+    g_resource_hook_installed = identifier_ready || value_ready || g_original_name ||
+        g_original_package_name || g_original_type_name || g_original_entry_name;
+    if (!g_resource_hook_installed) {
+        log_error("AssetManager resource hook unavailable; resources stay visible");
+        return false;
+    }
     log_info("AssetManager resource hook installed; configured resource packages hidden "
              "(identifier=%d value=%d name=%d)",
              identifier_ready ? 1 : 0, value_ready ? 1 : 0, g_original_name ? 1 : 0);

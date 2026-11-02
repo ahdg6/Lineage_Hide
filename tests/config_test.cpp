@@ -36,6 +36,29 @@ int main() {
     }
     assert(!parse_config(base + std::string(65536, '#'), c, error));
     assert(!parse_config(base + std::string("\0", 1), c, error));
+    // An import without its last LF must not normalize into an unreadable file.
+    std::string boundary=base;
+    for (int i=0; boundary.size()+264 < kMaxConfigBytes; ++i) {
+        auto package="org.boundary.app"+std::to_string(i);
+        package.append(255-package.size(), 'a');
+        boundary += "package="+package+'\n';
+    }
+    const auto tail=kMaxConfigBytes+1-boundary.size()-9;
+    assert(tail>=3 && tail<=255);
+    boundary += "package=a."+std::string(tail-2, 'z')+'\n';
+    assert(boundary.size()==kMaxConfigBytes+1);
+    boundary.pop_back();
+    assert(!parse_config(boundary, c, error));
+    assert(error.find("Canonical")!=std::string::npos);
+    boundary.pop_back();
+    assert(parse_config(boundary, c, error));
+    assert(serialize_config(c).size()==kMaxConfigBytes);
+    assert(save_config(c, error));
+    Config max_loaded; assert(load_config(max_loaded, error));
+    c.packages.push_back("org.overflow");
+    assert(!save_config(c, error));
+    assert(load_config(max_loaded, error));
+    assert(serialize_config(max_loaded).size()==kMaxConfigBytes);
     auto change = [&](std::string from, std::string to) { auto b = base; b.replace(b.find(from), from.size(), to); return b; };
     assert(!parse_config(change("mode=all", "mode=oops"), c, error));
     assert(!parse_config(change("enabled=1", "enabled=yes"), c, error));
@@ -99,6 +122,11 @@ int main() {
     c.enabled = false;
     assert(!should_inject(c, 10000, "org.example.app", systems));
     c = preset("evox"); set_active_config(c);
+    assert(resource_id_matches(0x3f010001));
+    assert(!resource_id_matches(0x01010001)); assert(!resource_id_matches(0x7f010001));
+    c.resource_ids={"42"}; set_active_config(c);
+    assert(!resource_id_matches(0x3f010001)); assert(resource_id_matches(0x42010001));
+    c.resources=false; set_active_config(c); assert(!resource_id_matches(0x42010001));
     assert(hide_service("EVOLUTION.hardware"));
     assert(hide_service("lineage.test"));
     assert(hide_service("PROFILE"));
@@ -113,7 +141,6 @@ int main() {
     assert(hide_service("customservice")); assert(hide_feature("a.b"));
     assert(feature_length_matches(255)); assert(feature_length_matches(3));
     assert(!feature_length_matches(4)); assert(!feature_length_matches(256));
-    assert(broadcast_length_matches(11)); assert(!broadcast_length_matches(1));
     assert(hide_feature(std::string(255, 'a'))); assert(hide_broadcast_action("test.ACTION"));
     c.services = c.features = c.broadcasts = false; set_active_config(c);
     assert(!hide_service("customrom")); assert(!hide_feature("a.b"));

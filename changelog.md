@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.0.0-preview.2
+
+- Copy Binder-owned service replies into writable Parcel storage before changing matched strings; skip edits if allocation fails.
+- Route Binder filtering by both transaction ID and interface descriptor, including colliding service/package/activity transaction IDs.
+- Parse broadcast arguments to rewrite only Intent.action; retain extras, feature IDs and normal broadcasts, and avoid copying unmatched requests.
+- Preserve original functions after partial resource-hook installation; precompute resource package IDs for constant-time lookup.
+- Skip reflection hooks if AssetManager cannot be resolved; reject configurations that normalize beyond 64 KiB.
+- Bound PackageManager boot/WebUI commands, check SUSFS command pipe setup, and avoid spinning when a child closes its output before exiting.
+- Add ASan/UBSan JNI hook and subprocess regressions, maximum-size configuration round trips and isolated boot-script tests.
+- Android device validation remains pending; this is an arm64 test build.
+
 ## 3.0.0-preview.1
 
 - Add an offline KernelSU WebUI with editable LineageOS and Evolution X presets.

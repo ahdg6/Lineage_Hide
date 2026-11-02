@@ -82,6 +82,7 @@ private:
 struct ParcelMethods {
     jclass cls = nullptr;
     jmethodID data_size = nullptr;
+    jmethodID set_data_size = nullptr;
     jmethodID data_position = nullptr;
     jmethodID set_data_position = nullptr;
     jmethodID read_string = nullptr;
@@ -89,6 +90,7 @@ struct ParcelMethods {
     jmethodID read_string8 = nullptr;
     jmethodID write_string8 = nullptr;
     jmethodID read_int = nullptr;
+    jmethodID read_binder = nullptr;
     jmethodID obtain = nullptr;
     jmethodID append_from = nullptr;
     jmethodID recycle = nullptr;
@@ -271,12 +273,13 @@ bool init_parcel_methods(JNIEnv *env) {
         return env->GetMethodID(methods.cls, name, signature);
     };
     methods.data_size = find_method("dataSize", "()I");
+    methods.set_data_size = find_method("setDataSize", "(I)V");
     methods.data_position = find_method("dataPosition", "()I");
     methods.set_data_position = find_method("setDataPosition", "(I)V");
     methods.read_string = find_method("readString", "()Ljava/lang/String;");
     methods.write_string = find_method("writeString", "(Ljava/lang/String;)V");
     methods.read_int = find_method("readInt", "()I");
-    if (env->ExceptionCheck() || !methods.data_size || !methods.data_position ||
+    if (env->ExceptionCheck() || !methods.data_size || !methods.set_data_size || !methods.data_position ||
         !methods.set_data_position || !methods.read_string || !methods.write_string ||
         !methods.read_int) {
         clear_jni_exception(env);
@@ -284,6 +287,9 @@ bool init_parcel_methods(JNIEnv *env) {
         pthread_mutex_unlock(&g_parcel_mutex);
         return false;
     }
+
+    methods.read_binder = find_method("readStrongBinder", "()Landroid/os/IBinder;");
+    if (env->ExceptionCheck()) { clear_jni_exception(env); methods.read_binder = nullptr; }
 
     // Intent actions moved from writeString (UTF-16) to writeString8 (UTF-8);
     // both accessors are optional so older releases still get the UTF-16 path.
@@ -603,14 +609,10 @@ jobject filtered_name_request(JNIEnv *env, jobject parcel, jint name_position,
     return retained;
 }
 
-// Broadcast requests embed the Intent early in the parcel; the action is a
-// length-prefixed string (UTF-8 on newer releases, UTF-16 before that).
-// ActivityManager rejects lineage* protected actions from apps, so scan a
-// bounded prefix of a private copy and replace any protected action with an
-// equal-length placeholder; the broadcast is then accepted as an ordinary,
-// unprotected one.  The copy is owned by this process, so writing is safe.
-constexpr jint kMaxBroadcastScanBytes = 4 * 1024;
-
+// Follow IActivityManager's AIDL arguments to Intent.mAction. Searching arbitrary
+// parcel words would also rewrite matching extras, resultData and feature IDs.
+// Intent uses UTF-16 through Android 10 and UTF-8 starting with Android 11.
+// https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/core/java/android/content/Intent.java
 bool scrub_broadcast_action_at(JNIEnv *env, jobject parcel, jint position, jmethodID read,
                                jmethodID write) {
     const ScopedOriginalParcelRead original_reads;
@@ -648,71 +650,76 @@ bool scrub_broadcast_action_at(JNIEnv *env, jobject parcel, jint position, jmeth
     return true;
 }
 
-jobject filtered_broadcast_request(JNIEnv *env, jobject parcel) {
+jobject filtered_broadcast_request(JNIEnv *env, jobject parcel, jint arguments, bool with_feature) {
+    const ScopedOriginalParcelRead original_reads;
     if (!g_parcel_methods.obtain || !g_parcel_methods.append_from || !g_parcel_methods.recycle ||
-        env->ExceptionCheck()) return nullptr;
+        !g_parcel_methods.read_binder || env->ExceptionCheck()) return nullptr;
+    const jint sdk = sdk_int(env);
+    if (sdk < 0) return nullptr;
+    const jmethodID read = sdk >= 30 ? g_parcel_methods.read_string8 : g_parcel_methods.read_string;
+    const jmethodID write = sdk >= 30 ? g_parcel_methods.write_string8 : g_parcel_methods.write_string;
+    if (!read || !write) return nullptr;
     const jint size = env->CallIntMethod(parcel, g_parcel_methods.data_size);
     if (env->ExceptionCheck() || size <= 0 || size > MAX_REPLY_BUF) {
         clear_jni_exception(env);
         return nullptr;
     }
-    if (env->PushLocalFrame(4) < 0) {
-        clear_jni_exception(env);
-        return nullptr;
-    }
-    jobject copy = env->CallStaticObjectMethod(g_parcel_methods.cls, g_parcel_methods.obtain);
-    if (copy && !env->ExceptionCheck()) {
-        env->CallVoidMethod(copy, g_parcel_methods.append_from, parcel, 0, size);
-    }
-    int hits = 0;
-    const jint limit = size < kMaxBroadcastScanBytes ? size : kMaxBroadcastScanBytes;
-    for (jint position = 0; copy && !env->ExceptionCheck() && position <= limit - 4;
-         position += 4) {
-        env->CallVoidMethod(copy, g_parcel_methods.set_data_position, position);
-        if (env->ExceptionCheck()) {
+    const jint original_position = env->CallIntMethod(parcel, g_parcel_methods.data_position);
+    if (env->ExceptionCheck()) { clear_jni_exception(env); return nullptr; }
+    if (env->PushLocalFrame(4) < 0) { clear_jni_exception(env); return nullptr; }
+    const jint action_position = [&]() -> jint {
+        env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, arguments);
+        if (env->ExceptionCheck()) return -1;
+        // readStrongBinder advances over the ABI-specific flat_binder_object.
+        jobject caller = env->CallObjectMethod(parcel, g_parcel_methods.read_binder);
+        if (caller) env->DeleteLocalRef(caller);
+        if (env->ExceptionCheck()) return -1;
+        if (with_feature) {
+            jobject feature = env->CallObjectMethod(parcel, g_parcel_methods.read_string);
+            if (feature) env->DeleteLocalRef(feature);
+            if (env->ExceptionCheck()) return -1;
+        }
+        const jint present = env->CallIntMethod(parcel, g_parcel_methods.read_int);
+        if (env->ExceptionCheck() || present != 1) return -1;
+        const jint position = env->CallIntMethod(parcel, g_parcel_methods.data_position);
+        if (env->ExceptionCheck() || position < 0 || position > size - 4) return -1;
+        auto action = static_cast<jstring>(env->CallObjectMethod(parcel, read));
+        const std::string name = !env->ExceptionCheck() ? jstring_ascii(env, action) : std::string();
+        if (action) env->DeleteLocalRef(action);
+        const jint end = !env->ExceptionCheck() ? env->CallIntMethod(parcel, g_parcel_methods.data_position) : -1;
+        return !env->ExceptionCheck() && end > position && end <= size && hide_broadcast_action(name)
+            ? position : -1;
+    }();
+    clear_jni_exception(env);
+    env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, original_position);
+    const bool restored = !env->ExceptionCheck();
+    clear_jni_exception(env);
+    jobject copy = nullptr;
+    if (restored && action_position >= 0) {
+        copy = env->CallStaticObjectMethod(g_parcel_methods.cls, g_parcel_methods.obtain);
+        if (copy && !env->ExceptionCheck())
+            env->CallVoidMethod(copy, g_parcel_methods.append_from, parcel, 0, size);
+        const bool scrubbed = copy && !env->ExceptionCheck() &&
+            scrub_broadcast_action_at(env, copy, action_position, read, write);
+        const jint copy_size = scrubbed && !env->ExceptionCheck()
+            ? env->CallIntMethod(copy, g_parcel_methods.data_size) : -1;
+        if (!scrubbed || env->ExceptionCheck() || copy_size != size) {
             clear_jni_exception(env);
-            break;
-        }
-        const jint length = env->CallIntMethod(copy, g_parcel_methods.read_int);
-        if (env->ExceptionCheck()) {
-            clear_jni_exception(env);
-            continue;
-        }
-        if (length < 0 || !lh::broadcast_length_matches(static_cast<size_t>(length))) continue;
-        if (g_parcel_methods.read_string8 &&
-            scrub_broadcast_action_at(env, copy, position, g_parcel_methods.read_string8,
-                                      g_parcel_methods.write_string8)) {
-            ++hits;
-            continue;
-        }
-        if (scrub_broadcast_action_at(env, copy, position, g_parcel_methods.read_string,
-                                      g_parcel_methods.write_string)) {
-            ++hits;
-        }
-    }
-    if (env->ExceptionCheck()) {
-        clear_jni_exception(env);
-        if (copy) recycle_request(env, copy);
-        copy = nullptr;
-    } else if (copy) {
-        const jint copy_size = env->CallIntMethod(copy, g_parcel_methods.data_size);
-        if (env->ExceptionCheck() || copy_size != size || hits == 0) {
-            clear_jni_exception(env);
-            recycle_request(env, copy);
+            if (copy) recycle_request(env, copy);
             copy = nullptr;
         }
     }
+    clear_jni_exception(env);
     jobject retained = env->PopLocalFrame(copy);
     if (env->ExceptionCheck()) {
         clear_jni_exception(env);
         if (retained) recycle_request(env, retained);
         return nullptr;
     }
-    if (retained && hits > 0) log_info("scrubbed %d lineage broadcast action(s)", hits);
     return retained;
 }
 
-bool filter_reply_string(JNIEnv *env, jobject parcel, jint limit) {
+bool filter_reply_string(JNIEnv *env, jobject parcel, jint limit, jint size, bool &owned) {
     const ScopedOriginalParcelRead original_reads;
     const jint start = env->CallIntMethod(parcel, g_parcel_methods.data_position);
     if (env->ExceptionCheck() || start < 0 || start > limit - 4) return false;
@@ -731,7 +738,15 @@ bool filter_reply_string(JNIEnv *env, jobject parcel, jint limit) {
     if (!env->ExceptionCheck() && !service.empty() && hide_service(service)) {
         jstring replacement = replacement_for(env, name);
         if (replacement && !env->ExceptionCheck()) {
-            env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, start);
+            // Parcel.setDataSize calls continueWrite even at the same size:
+            // an external Binder data reference is copied into owned storage.
+            // A direct writeString on the received buffer may otherwise fault.
+            // https://android.googlesource.com/platform/frameworks/native/+/refs/heads/main/libs/binder/Parcel.cpp
+            if (!owned) {
+                env->CallVoidMethod(parcel, g_parcel_methods.set_data_size, size);
+                owned = !env->ExceptionCheck();
+            }
+            if (owned) env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, start);
             if (!env->ExceptionCheck()) {
                 env->CallVoidMethod(parcel, g_parcel_methods.write_string, replacement);
             }
@@ -746,6 +761,7 @@ bool filter_reply_string(JNIEnv *env, jobject parcel, jint limit) {
 }
 
 void filter_list_reply(JNIEnv *env, jobject parcel) {
+    bool owned = false;
     if (!reset_reply_position(env, parcel)) return;
     const jint size = env->CallIntMethod(parcel, g_parcel_methods.data_size);
     if (env->ExceptionCheck() || size < 8 || size > MAX_REPLY_BUF) {
@@ -754,7 +770,7 @@ void filter_list_reply(JNIEnv *env, jobject parcel) {
     }
     const jint sdk = g_sdk_int.load(std::memory_order_acquire);
     if (sdk >= 26 && sdk <= 28) {
-        filter_reply_string(env, parcel, size);
+        filter_reply_string(env, parcel, size, size, owned);
         reset_reply_position(env, parcel);
         return;
     }
@@ -766,13 +782,14 @@ void filter_list_reply(JNIEnv *env, jobject parcel) {
     const jint count = env->CallIntMethod(parcel, g_parcel_methods.read_int);
     if (!env->ExceptionCheck() && count >= 0 && count <= (size - 8) / 4) {
         for (jint index = 0; index < count; ++index) {
-            if (!filter_reply_string(env, parcel, size)) break;
+            if (!filter_reply_string(env, parcel, size, size, owned)) break;
         }
     }
     reset_reply_position(env, parcel);
 }
 
 void filter_debug_info_reply(JNIEnv *env, jobject parcel) {
+    bool owned = false;
     if (!reset_reply_position(env, parcel)) return;
     const jint size = env->CallIntMethod(parcel, g_parcel_methods.data_size);
     if (env->ExceptionCheck() || size < 8 || size > MAX_REPLY_BUF) {
@@ -801,7 +818,7 @@ void filter_debug_info_reply(JNIEnv *env, jobject parcel) {
         const jint object_size = env->CallIntMethod(parcel, g_parcel_methods.read_int);
         if (env->ExceptionCheck() || object_size < 12 || object_size > size - object_start) break;
         const jint object_end = object_start + object_size;
-        if (!filter_reply_string(env, parcel, object_end - 4)) break;
+        if (!filter_reply_string(env, parcel, object_end - 4, size, owned)) break;
         (void)env->CallIntMethod(parcel, g_parcel_methods.read_int);
         if (env->ExceptionCheck()) break;
         env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, object_end);
@@ -897,8 +914,8 @@ jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data
         return g_original_transact_native(env, thiz, code, data_obj, reply_obj, flags);
     }
 
-    const bool is_list = lh::active_config().services && is_list_transaction(env, code);
-    const bool is_debug = lh::active_config().services && is_debug_transaction(env, code);
+    const bool is_list = (flags & TF_ONE_WAY) == 0 && lh::active_config().services && is_list_transaction(env, code);
+    const bool is_debug = (flags & TF_ONE_WAY) == 0 && lh::active_config().services && is_debug_transaction(env, code);
     const bool is_lookup = lh::active_config().services && is_lookup_transaction(code) && (flags & TF_ONE_WAY) == 0;
     const bool feature_filtering = g_feature_filtering.load(std::memory_order_acquire);
     const bool is_has_feature = feature_filtering && g_package_transactions.has_system_feature > 0 &&
@@ -910,26 +927,27 @@ jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data
                                 code == g_activity_transactions.broadcast_intent) ||
                                (g_activity_transactions.broadcast_intent_with_feature > 0 &&
                                 code == g_activity_transactions.broadcast_intent_with_feature));
-    jint name_position = -1;
-    if ((is_list || is_debug || is_lookup || is_has_feature) && data_obj != nullptr &&
-        init_parcel_methods(env)) {
-        name_position = is_has_feature
-                            ? interface_name_position(env, data_obj, kIPackageManagerDescriptor)
-                            : interface_name_position(env, data_obj, kIServiceManagerDescriptor);
-    }
-    const bool descriptor_ready = name_position >= 0;
+    if (!is_list && !is_debug && !is_lookup && !is_has_feature && !is_broadcast)
+        return g_original_transact_native(env, thiz, code, data_obj, reply_obj, flags);
 
+    // Transaction numbers are local to each AIDL interface, not globally unique.
+    const jint service_position = (is_list || is_debug || is_lookup) && data_obj && init_parcel_methods(env)
+        ? interface_name_position(env, data_obj, kIServiceManagerDescriptor) : -1;
+    const jint feature_position = is_has_feature && data_obj && init_parcel_methods(env)
+        ? interface_name_position(env, data_obj, kIPackageManagerDescriptor) : -1;
     jobject filtered_request = nullptr;
-    if (descriptor_ready && is_lookup) {
-        filtered_request = filtered_name_request(env, data_obj, name_position, hide_service, true);
-    } else if (descriptor_ready && is_has_feature) {
-        filtered_request = filtered_name_request(env, data_obj, name_position, hide_feature, false);
+    if (service_position >= 0 && is_lookup) {
+        filtered_request = filtered_name_request(env, data_obj, service_position, hide_service, true);
+    } else if (feature_position >= 0) {
+        filtered_request = filtered_name_request(env, data_obj, feature_position, hide_feature, false);
     }
 
     jobject broadcast_request = nullptr;
-    if (is_broadcast && data_obj != nullptr && init_parcel_methods(env) &&
-        interface_name_position(env, data_obj, kActivityManagerDescriptor) >= 0) {
-        broadcast_request = filtered_broadcast_request(env, data_obj);
+    if (is_broadcast && data_obj && init_parcel_methods(env)) {
+        const jint arguments = interface_name_position(env, data_obj, kActivityManagerDescriptor);
+        if (arguments >= 0)
+            broadcast_request = filtered_broadcast_request(env, data_obj, arguments,
+                code == g_activity_transactions.broadcast_intent_with_feature);
     }
 
     jobject request_to_send = filtered_request ? filtered_request : data_obj;
@@ -944,9 +962,9 @@ jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data
     }
 
     if (!init_parcel_methods(env)) return result;
-    if (is_list && descriptor_ready) {
+    if (is_list && service_position >= 0) {
         filter_list_reply(env, reply_obj);
-    } else if (is_debug && descriptor_ready) {
+    } else if (is_debug && service_position >= 0) {
         filter_debug_info_reply(env, reply_obj);
     }
     clear_jni_exception(env);

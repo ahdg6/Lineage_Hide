@@ -48,13 +48,10 @@ bool jstring_equals(JNIEnv *env, jstring value, const char *needle) {
     return jstring_to_ascii(env, value) == needle;
 }
 
-// Filtering is scoped to AssetManager so unrelated reflection in target apps
-// is left alone.  When the class could not be resolved at install time the
-// filter falls back to name matching, keeping the fingerprint hidden at the
-// cost of touching every class.
+// Never broaden filtering if the AssetManager class cannot be resolved.
 bool is_asset_manager_class(JNIEnv *env, jobject clazz) {
     if (!env || !clazz) return false;
-    if (!g_asset_manager_class) return true;
+    if (!g_asset_manager_class) return false;
     return env->IsSameObject(clazz, g_asset_manager_class);
 }
 
@@ -82,6 +79,7 @@ jobjectArray filter_field_array(JNIEnv *env, jobjectArray fields) {
     jsize dropped = 0;
     for (jsize index = 0; index < length; ++index) {
         jobject field = env->GetObjectArrayElement(fields, index);
+        if (env->ExceptionCheck()) { clear_jni_exception(env); return fields; }
         if (!field) continue;
         if (field_is_hidden(env, field)) ++dropped;
         env->DeleteLocalRef(field);
@@ -179,11 +177,16 @@ bool install_field_hooks(JNIEnv *env, zygisk::Api *api) {
         clear_jni_exception(env);
     }
 
+    if (!g_asset_manager_class) {
+        log_error("AssetManager unavailable; reflection filtering skipped");
+        return false;
+    }
     jclass field_class = env->FindClass("java/lang/reflect/Field");
     if (field_class && !env->ExceptionCheck()) {
         g_field_get_name = env->GetMethodID(field_class, "getName", "()Ljava/lang/String;");
     }
     clear_jni_exception(env);
+    if (field_class) env->DeleteLocalRef(field_class);
 
     JNINativeMethod field_methods[] = {
         {"getDeclaredField", "(Ljava/lang/String;)Ljava/lang/reflect/Field;",

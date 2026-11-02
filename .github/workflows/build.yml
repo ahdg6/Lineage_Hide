@@ -58,7 +58,7 @@ jobs:
           "$sdk_root/cmake/3.22.1/bin/cmake" --version
           "$sdk_root/ndk/27.2.12479018/ndk-build" --version | head -n 1
 
-      - name: Test native configuration and transport
+      - name: Test native hooks, configuration, transport and boot scripts
         run: python3 -m unittest discover -s tests -v
 
       - name: Set up Node

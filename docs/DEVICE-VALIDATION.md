@@ -1,6 +1,6 @@
 # Device validation — pending
 
-These checks have not yet been performed for 3.0.0-preview.1. Host/browser checks and successful NDK compilation are not device acceptance.
+These checks have not yet been performed for 3.0.0-preview.2. Host/browser checks and successful NDK compilation are not device acceptance.
 
 1. Disable other Lineage Hide variants, install this ZIP, reboot with a compatible Zygisk implementation, and open the WebUI. Confirm the detected preset, default-on native path option, default-off legacy option, installed app listing and valid boot snapshot.
 2. Save include mode with one non-system test application. Force-stop/reopen it and another unlisted application. Check actual feature/service/resource/broadcast/reflection behavior in both; confirm the scope decision in `logcat -s LineageHide` where available.
