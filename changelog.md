@@ -9,6 +9,7 @@
 - Skip reflection hooks if AssetManager cannot be resolved; reject configurations that normalize beyond 64 KiB.
 - Bound PackageManager boot/WebUI commands, check SUSFS command pipe setup, and avoid spinning when a child closes its output before exiting.
 - Add ASan/UBSan JNI hook and subprocess regressions, maximum-size configuration round trips and isolated boot-script tests.
+- Align both native binaries and their RELRO ranges for 16 KiB kernels; verify alignment during every direct/CI build.
 - Android device validation remains pending; this is an arm64 test build.
 
 ## 3.0.0-preview.1

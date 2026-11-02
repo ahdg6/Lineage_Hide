@@ -65,7 +65,7 @@ Import loads a validated draft; saving is explicit. Export validates the current
 
 ## Build and verify
 
-Linux x86_64, NDK r27c / `27.2.12479018`, CMake, Ninja, zip/unzip and readelf:
+Linux x86_64, NDK r27c / `27.2.12479018`, CMake, Ninja, Python 3, zip/unzip and readelf:
 
 ```sh
 bash scripts/build-native.sh /absolute/path/to/android-ndk-r27c

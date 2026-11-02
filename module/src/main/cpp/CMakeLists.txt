@@ -51,6 +51,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 target_compile_features(lineage_hide PRIVATE cxx_std_20)
 add_executable(configctl configctl.cpp config.cpp susfs_backend.cpp)
 target_compile_options(configctl PRIVATE -Wall -Wextra -fvisibility=hidden)
+# NDK r27 defaults to 4 KiB. Set both LOAD alignment and RELRO padding so
+# the same extracted ELF files can load on 4 KiB and 16 KiB Android kernels.
+foreach(target lineage_hide configctl)
+    target_link_options(${target} PRIVATE
+        "-Wl,-z,max-page-size=16384" "-Wl,-z,common-page-size=16384")
+endforeach()
 if (CMAKE_STRIP)
     add_custom_command(TARGET configctl POST_BUILD
         COMMAND ${CMAKE_STRIP} --strip-unneeded $<TARGET_FILE:configctl>)
