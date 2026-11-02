@@ -2,15 +2,15 @@
 #include "config.h"
 #include "broadcast_filter.h"
 #include "feature_filter.h"
+#include "jni_strings.h"
 #include "log.h"
-#include "service_cache.h"
 #include "service_filter.h"
 
 #include <atomic>
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <pthread.h>
-#include <string>
 #include <string_view>
 
 #ifndef TF_ONE_WAY
@@ -58,8 +58,6 @@ struct ActivityTransactions {
 };
 
 ActivityTransactions g_activity_transactions;
-std::atomic<bool> g_feature_filtering{false};
-std::atomic<bool> g_broadcast_filtering{false};
 
 // Internal Parcel inspection must see the original names. Otherwise the
 // nativeReadString hook can replace a feature before hasSystemFeature's
@@ -154,13 +152,11 @@ jint sdk_int(JNIEnv *env) {
     return value;
 }
 
-bool is_list_transaction(JNIEnv *env, jint code) {
-    (void)env;
+bool is_list_transaction(jint code) {
     return g_service_transactions.list_services > 0 && code == g_service_transactions.list_services;
 }
 
-bool is_debug_transaction(JNIEnv *env, jint code) {
-    (void)env;
+bool is_debug_transaction(jint code) {
     return g_service_transactions.debug_info > 0 && code == g_service_transactions.debug_info;
 }
 
@@ -187,15 +183,16 @@ jint read_transaction_field(JNIEnv *env, jclass stub, const char *name) {
 }
 
 void init_service_transactions(JNIEnv *env) {
+    const auto &settings = lh::active_config();
     const jint sdk = sdk_int(env);
     ServiceTransactions transactions;
-    if (sdk >= 26 && sdk <= 28) {
+    if (settings.has_service_rules() && sdk >= 26 && sdk <= 28) {
         transactions.get_service = 1;
         transactions.check_service = 2;
         transactions.list_services = kSvcListServices;
     }
 
-    jclass stub = env ? env->FindClass("android/os/IServiceManager$Stub") : nullptr;
+    jclass stub = settings.has_service_rules() ? env->FindClass("android/os/IServiceManager$Stub") : nullptr;
     if (stub) {
         transactions.get_service = read_transaction_field(env, stub, "TRANSACTION_getService");
         transactions.check_service = read_transaction_field(env, stub, "TRANSACTION_checkService");
@@ -209,7 +206,8 @@ void init_service_transactions(JNIEnv *env) {
     }
     g_service_transactions = transactions;
 
-    jclass package_stub = env ? env->FindClass("android/content/pm/IPackageManager$Stub") : nullptr;
+    g_package_transactions = {};
+    jclass package_stub = settings.has_feature_rules() ? env->FindClass("android/content/pm/IPackageManager$Stub") : nullptr;
     if (package_stub) {
         PackageTransactions packages;
         packages.has_system_feature =
@@ -220,7 +218,8 @@ void init_service_transactions(JNIEnv *env) {
         clear_jni_exception(env);
     }
 
-    jclass activity_stub = env ? env->FindClass("android/app/IActivityManager$Stub") : nullptr;
+    g_activity_transactions = {};
+    jclass activity_stub = settings.has_broadcast_rules() ? env->FindClass("android/app/IActivityManager$Stub") : nullptr;
     if (activity_stub) {
         ActivityTransactions activities;
         activities.broadcast_intent =
@@ -233,7 +232,7 @@ void init_service_transactions(JNIEnv *env) {
         clear_jni_exception(env);
     }
 
-    log_info("SM transactions: get=%d check=%d get2=%d check2=%d list=%d debug=%d; "
+    log_debug("SM transactions: get=%d check=%d get2=%d check2=%d list=%d debug=%d; "
              "PM hasFeature=%d; AM broadcast=%d/%d",
              transactions.get_service, transactions.check_service, transactions.get_service2,
              transactions.check_service2, transactions.list_services, transactions.debug_info,
@@ -325,37 +324,13 @@ bool init_parcel_methods(JNIEnv *env) {
     return true;
 }
 
-std::string jstring_ascii(JNIEnv *env, jstring value) {
-    if (!env || !value) return {};
-    const jsize length = env->GetStringLength(value);
-    if (env->ExceptionCheck() || length <= 0 || length > 512) return {};
-    const jchar *chars = env->GetStringChars(value, nullptr);
-    if (!chars) return {};
-    try {
-        std::string out;
-        out.reserve(static_cast<size_t>(length));
-        for (jsize i = 0; i < length; ++i) {
-            const jchar c = chars[i];
-            out.push_back(c <= 0x7f ? static_cast<char>(c) : '?');
-        }
-        env->ReleaseStringChars(value, chars);
-        return out;
-    } catch (...) {
-        env->ReleaseStringChars(value, chars);
-        return {};
-    }
-}
-
 jstring replacement_for(JNIEnv *env, jstring value) {
     if (!env || !value) return nullptr;
     const jsize length = env->GetStringLength(value);
     if (env->ExceptionCheck() || length <= 0 || length > 512) return nullptr;
-    try {
-        std::u16string replacement(static_cast<size_t>(length), u'_');
-        return env->NewString(reinterpret_cast<const jchar *>(replacement.data()), length);
-    } catch (...) {
-        return nullptr;
-    }
+    jchar replacement[512];
+    std::fill_n(replacement, length, static_cast<jchar>('_'));
+    return env->NewString(replacement, length);
 }
 
 jint interface_name_position(JNIEnv *env, jobject parcel, const char *descriptor) {
@@ -401,7 +376,8 @@ jint interface_name_position(JNIEnv *env, jobject parcel, const char *descriptor
             clear_jni_exception(env);
             continue;
         }
-        const std::string value = jstring_ascii(env, token);
+        char buffer[512];
+        const auto value = lh::read_ascii(env, token, buffer);
         if (token) env->DeleteLocalRef(token);
         if (env->ExceptionCheck()) {
             clear_jni_exception(env);
@@ -483,7 +459,8 @@ bool is_app_service_caller(JNIEnv *env) {
         auto name = element && !env->ExceptionCheck()
                         ? static_cast<jstring>(env->CallObjectMethod(element, g_caller_methods.get_class_name))
                         : nullptr;
-        const std::string class_name = !env->ExceptionCheck() ? jstring_ascii(env, name) : std::string();
+        char buffer[512];
+        const auto class_name = !env->ExceptionCheck() ? lh::read_ascii(env, name, buffer) : std::string_view();
         if (env->ExceptionCheck() || class_name.empty()) break;
         constexpr const char *kPlumbing[] = {
             "android.os.BinderProxy", "android.os.ServiceManager", "android.os.IServiceManager$",
@@ -574,7 +551,8 @@ jobject filtered_name_request(JNIEnv *env, jobject parcel, jint name_position,
     const bool valid = !env->ExceptionCheck() && name && end >= name_position + 4 && end <= size;
     clear_jni_exception(env);
     if (original_position >= 0) env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, original_position);
-    const std::string service = valid && !env->ExceptionCheck() ? jstring_ascii(env, name) : std::string();
+    char buffer[512];
+    const auto service = valid && !env->ExceptionCheck() ? lh::read_ascii(env, name, buffer) : std::string_view();
     jobject copy = nullptr;
     if (!env->ExceptionCheck() && !service.empty() && hide(service) &&
         (!require_app_caller || is_app_service_caller(env))) {
@@ -628,7 +606,8 @@ bool scrub_broadcast_action_at(JNIEnv *env, jobject parcel, jint position, jmeth
         return false;
     }
     if (!value) return false;
-    const std::string action = jstring_ascii(env, value);
+    char buffer[512];
+    const auto action = lh::read_ascii(env, value, buffer);
     jstring replacement = !action.empty() && hide_broadcast_action(action)
                               ? replacement_for(env, value)
                               : nullptr;
@@ -684,7 +663,8 @@ jobject filtered_broadcast_request(JNIEnv *env, jobject parcel, jint arguments, 
         const jint position = env->CallIntMethod(parcel, g_parcel_methods.data_position);
         if (env->ExceptionCheck() || position < 0 || position > size - 4) return -1;
         auto action = static_cast<jstring>(env->CallObjectMethod(parcel, read));
-        const std::string name = !env->ExceptionCheck() ? jstring_ascii(env, action) : std::string();
+        char buffer[512];
+        const auto name = !env->ExceptionCheck() ? lh::read_ascii(env, action, buffer) : std::string_view();
         if (action) env->DeleteLocalRef(action);
         const jint end = !env->ExceptionCheck() ? env->CallIntMethod(parcel, g_parcel_methods.data_position) : -1;
         return !env->ExceptionCheck() && end > position && end <= size && hide_broadcast_action(name)
@@ -734,7 +714,8 @@ bool filter_reply_string(JNIEnv *env, jobject parcel, jint limit, jint size, boo
         return false;
     }
     if (!name) return true;
-    const std::string service = jstring_ascii(env, name);
+    char buffer[512];
+    const auto service = lh::read_ascii(env, name, buffer);
     if (!env->ExceptionCheck() && !service.empty() && hide_service(service)) {
         jstring replacement = replacement_for(env, name);
         if (replacement && !env->ExceptionCheck()) {
@@ -853,7 +834,9 @@ jstring filter_feature_read(JNIEnv *env, jstring value) {
     if (length < 0 || !lh::feature_length_matches(static_cast<size_t>(length))) {
         return value;
     }
-    const std::string name = jstring_ascii(env, value);
+    char buffer[255];
+    const auto name = lh::read_ascii(env, value, buffer, length);
+    if (env->ExceptionCheck()) { clear_jni_exception(env); return value; }
     if (name.empty() || !hide_feature(name)) return value;
     jstring replacement = replacement_for(env, value);
     if (!replacement || env->ExceptionCheck()) {
@@ -899,41 +882,42 @@ void install_feature_read_hooks(JNIEnv *env, zygisk::Api *api) {
         return;
     }
     g_feature_read_hooks_installed = true;
-    log_info("Parcel string read hook installed (%d/2); lineage feature names filtered",
+    log_debug("Parcel string read hook installed (%d/2); configured feature names filtered",
              installed);
 }
 
 jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data_obj, jobject reply_obj,
-                              jint flags);
-
-jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data_obj, jobject reply_obj,
                               jint flags) {
-    (void)thiz;
     if (!g_original_transact_native) return JNI_FALSE;
-    if (!env || env->ExceptionCheck()) {
+    // No supported rule targets one-way transactions or missing request data.
+    if ((flags & TF_ONE_WAY) || !data_obj || !env) {
         return g_original_transact_native(env, thiz, code, data_obj, reply_obj, flags);
     }
 
-    const bool is_list = (flags & TF_ONE_WAY) == 0 && lh::active_config().services && is_list_transaction(env, code);
-    const bool is_debug = (flags & TF_ONE_WAY) == 0 && lh::active_config().services && is_debug_transaction(env, code);
-    const bool is_lookup = lh::active_config().services && is_lookup_transaction(code) && (flags & TF_ONE_WAY) == 0;
-    const bool feature_filtering = g_feature_filtering.load(std::memory_order_acquire);
+    const auto &settings = lh::active_config();
+    const bool is_list = settings.has_service_rules() && is_list_transaction(code);
+    const bool is_debug = settings.has_service_rules() && is_debug_transaction(code);
+    const bool is_lookup = settings.has_service_rules() && is_lookup_transaction(code);
+    const bool feature_filtering = settings.has_feature_rules();
     const bool is_has_feature = feature_filtering && g_package_transactions.has_system_feature > 0 &&
-                                code == g_package_transactions.has_system_feature &&
-                                (flags & TF_ONE_WAY) == 0;
-    const bool broadcast_filtering = g_broadcast_filtering.load(std::memory_order_acquire);
-    const bool is_broadcast = broadcast_filtering && (flags & TF_ONE_WAY) == 0 &&
+                                code == g_package_transactions.has_system_feature;
+    const bool broadcast_filtering = settings.has_broadcast_rules();
+    const bool is_broadcast = broadcast_filtering &&
                               ((g_activity_transactions.broadcast_intent > 0 &&
                                 code == g_activity_transactions.broadcast_intent) ||
                                (g_activity_transactions.broadcast_intent_with_feature > 0 &&
                                 code == g_activity_transactions.broadcast_intent_with_feature));
     if (!is_list && !is_debug && !is_lookup && !is_has_feature && !is_broadcast)
         return g_original_transact_native(env, thiz, code, data_obj, reply_obj, flags);
+    if (env->ExceptionCheck())
+        return g_original_transact_native(env, thiz, code, data_obj, reply_obj, flags);
 
+    // Installation already resolved Parcel methods. Avoid repeated readiness
+    // loads on every transaction; only inspect candidate interface-local IDs.
     // Transaction numbers are local to each AIDL interface, not globally unique.
-    const jint service_position = (is_list || is_debug || is_lookup) && data_obj && init_parcel_methods(env)
+    const jint service_position = (is_list || is_debug || is_lookup)
         ? interface_name_position(env, data_obj, kIServiceManagerDescriptor) : -1;
-    const jint feature_position = is_has_feature && data_obj && init_parcel_methods(env)
+    const jint feature_position = is_has_feature
         ? interface_name_position(env, data_obj, kIPackageManagerDescriptor) : -1;
     jobject filtered_request = nullptr;
     if (service_position >= 0 && is_lookup) {
@@ -943,7 +927,7 @@ jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data
     }
 
     jobject broadcast_request = nullptr;
-    if (is_broadcast && data_obj && init_parcel_methods(env)) {
+    if (is_broadcast) {
         const jint arguments = interface_name_position(env, data_obj, kActivityManagerDescriptor);
         if (arguments >= 0)
             broadcast_request = filtered_broadcast_request(env, data_obj, arguments,
@@ -961,7 +945,6 @@ jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data
         return result;
     }
 
-    if (!init_parcel_methods(env)) return result;
     if (is_list && service_position >= 0) {
         filter_list_reply(env, reply_obj);
     } else if (is_debug && service_position >= 0) {
@@ -973,22 +956,16 @@ jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data
 
 } // namespace
 
-void set_feature_filtering(bool enabled) {
-    g_feature_filtering.store(enabled, std::memory_order_release);
-}
-
-void set_broadcast_filtering(bool enabled) {
-    g_broadcast_filtering.store(enabled, std::memory_order_release);
-}
-
 bool install_jni_hook(JNIEnv *env, zygisk::Api *api) {
-    init_service_transactions(env);
     if (g_jni_hook_installed) return true;
+    const auto &settings = lh::active_config();
+    if (!settings.has_service_rules() && !settings.has_feature_rules() && !settings.has_broadcast_rules()) return false;
     if (!env || !api || !init_parcel_methods(env)) {
         log_error("JNI BinderProxy hook unavailable: Parcel methods not found");
         return false;
     }
-    if (!init_caller_methods(env)) {
+    init_service_transactions(env);
+    if (settings.has_service_rules() && !init_caller_methods(env)) {
         log_error("caller classification unavailable; direct service lookups left unchanged");
     }
 
@@ -1020,9 +997,9 @@ bool install_jni_hook(JNIEnv *env, zygisk::Api *api) {
     }
     g_original_transact_native = original;
     g_jni_hook_installed = true;
-    if (g_feature_filtering.load(std::memory_order_acquire)) {
+    if (settings.has_feature_rules()) {
         install_feature_read_hooks(env, api);
     }
-    log_info("BinderProxy.transactNative hook installed");
+    log_debug("BinderProxy.transactNative hook installed");
     return true;
 }

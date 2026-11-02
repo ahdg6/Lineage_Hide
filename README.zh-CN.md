@@ -4,7 +4,7 @@
 
 基于 [null07089/Lineage_Hide](https://github.com/null07089/Lineage_Hide) 的可配置 fork。提供 KernelSU WebUI、LineageOS / Evolution X 预设、应用黑白名单、自定义进程内规则及原生 SUSFS 路径后端。保留上游 GPL-3.0 许可证及作者署名。
 
-**当前版本：3.0.0-preview.4。** 已完成 arm64 编译、主机 native 测试及浏览器与真实配置工具的联调；在 Android 16/EvoX 实机上定位并修复了 SELinux 导致的启动清单失败，已确认 Duck 主进程及辅助进程注入；补充 EvoX 覆盖 APK 的映射规则后，Duck 的 mapsInjection 已为 Clean；属性区探针仍不可用，完整兼容性验收尚未完成。WebUI 的“清单就绪”只表示启动清单存在，不代表目标应用已成功安装 hooks。
+**当前版本：3.0.0-preview.5。** 本版清理 hook 开销和未使用的内核补丁脚本，详见 [运行开销检查](docs/PERFORMANCE.md)。主机测试与 arm64 构建覆盖本次整理，新版的实机重启及性能对比尚待验证。此前 Android 16/EvoX 实测已修复启动清单失败并确认 Duck 主进程及辅助进程注入；补充 EvoX 覆盖 APK 的映射规则后，mapsInjection 已为 Clean。属性区探针仍不可用，完整兼容性验收尚未完成。WebUI 的“清单就绪”只表示启动清单存在，不代表目标应用已成功安装 hooks。
 
 ## 使用
 

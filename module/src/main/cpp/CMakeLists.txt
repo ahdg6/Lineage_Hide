@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(LineageHide)
+option(LH_VERBOSE_LOGS "Log individual hook setup details" OFF)
 
 add_library(lineage_hide SHARED
     config.cpp
@@ -16,6 +17,9 @@ add_library(lineage_hide SHARED
 )
 
 target_include_directories(lineage_hide PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+if (LH_VERBOSE_LOGS)
+    target_compile_definitions(lineage_hide PRIVATE LH_VERBOSE_LOGS)
+endif()
 
 target_compile_options(lineage_hide PRIVATE
     -ffunction-sections

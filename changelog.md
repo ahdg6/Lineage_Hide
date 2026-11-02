@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.0-preview.5
+
+- Skip JNI inspection for unrelated Binder transaction IDs and one-way calls; retain descriptor validation for candidate IDs and preserve real Binder exceptions.
+- Match bounded JNI names using stack buffers instead of temporary native strings/pinned string copies. Resource-package and reflection names reject impossible lengths before extraction.
+- Skip hooks for empty/disabled channels, avoid companion access without a valid owning package, and unload when no process hooks are requested. Keep immutable configuration as the source of channel switches.
+- Reduce successful per-process setup logging to one line. Detailed setup logs are available with `-DLH_VERBOSE_LOGS=ON`; errors remain visible.
+- Remove unused `scripts/patch-kernel.sh` and `scripts/selinux_hide_patch.sh`. They were never packaged or run by this configurable module. Existing SUSFS rules, including the verified EvoX map rule, are unchanged.
+- Extend ASan/UBSan regressions for bypass paths, bounded string extraction/failure and empty channels. See `docs/PERFORMANCE.md` for runtime costs and limits; no measured battery-life claim is made.
+
 ## 3.0.0-preview.4
 
 - Add `/product/overlay/Pixelframework-res.apk` to the EvoX preset's mapping list. This uses the existing SUSFS map adapter and does not hide the file path or unload resources.

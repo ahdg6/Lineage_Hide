@@ -26,6 +26,12 @@ struct Config {
     std::vector<std::string> feature_names, broadcast_actions, resource_packages;
     std::vector<std::string> resource_ids;
     std::vector<std::string> path_keywords, hide_paths, map_paths;
+
+    // Empty channels do not need hooks, even if their UI switch is on.
+    bool has_service_rules() const { return services && (!service_keywords.empty() || !exact_services.empty()); }
+    bool has_feature_rules() const { return features && !feature_names.empty(); }
+    bool has_broadcast_rules() const { return broadcasts && !broadcast_actions.empty(); }
+    bool has_resource_rules() const { return resources && (!resource_packages.empty() || !resource_ids.empty()); }
 };
 Config preset(std::string_view name);
 bool parse_config(std::string_view text, Config &out, std::string &error);
@@ -43,4 +49,5 @@ const Config &active_config();
 void set_active_config(Config config);
 bool resource_id_matches(uint32_t resource_id);
 bool feature_length_matches(size_t length);
+bool resource_package_length_matches(size_t length);
 } // namespace lh

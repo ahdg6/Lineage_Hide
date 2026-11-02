@@ -8,13 +8,9 @@
 #include "zygisk.hpp"
 
 #include <jni.h>
-#include <array>
-#include <cstdio>
-#include <cstring>
 #include <string>
 
 namespace {
-std::array<char, 256> g_process_name{};
 bool g_enabled_for_process = false;
 
 std::string jstr_to_str(JNIEnv *env, jstring value) {
@@ -52,8 +48,6 @@ public:
 
     void preAppSpecialize(zygisk::AppSpecializeArgs *args) override {
         g_enabled_for_process = false;
-        resource_hook_ready_ = false;
-        g_process_name.fill('\0');
         if (!args) return;
 
         if (args->uid < 0 || args->uid % 100000 < 10000 || args->uid % 100000 > 19999) {
@@ -61,13 +55,10 @@ public:
             return;
         }
 
-        const std::string process_name = jstr_to_str(env_, args->nice_name);
-        if (!process_name.empty()) {
-            const size_t count = (process_name.size() < g_process_name.size() - 1)
-                                     ? process_name.size()
-                                     : g_process_name.size() - 1;
-            std::memcpy(g_process_name.data(), process_name.data(), count);
-            g_process_name[count] = '\0';
+        const auto package = package_from_data_dir(jstr_to_str(env_, args->app_data_dir));
+        if (!lh::valid_package(package)) {
+            if (api_) api_->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
+            return;
         }
         lh::Config config;
         std::vector<std::string> systems;
@@ -77,48 +68,50 @@ public:
             try { ready = lh::receive_snapshot(fd, config, systems); } catch (...) { ready = false; }
             close(fd);
         }
-        const auto package = package_from_data_dir(jstr_to_str(env_, args->app_data_dir));
         if (!ready || !lh::should_inject(config, args->uid, package, systems)) {
             if (api_) api_->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
             return;
         }
         lh::set_active_config(std::move(config));
         const auto &settings = lh::active_config();
-        g_enabled_for_process = true;
         if (api_ && settings.force_unmount) api_->setOption(zygisk::Option::FORCE_DENYLIST_UNMOUNT);
-        set_feature_filtering(settings.features);
-        set_broadcast_filtering(settings.broadcasts);
+        const bool binder_rules = settings.has_service_rules() || settings.has_feature_rules() || settings.has_broadcast_rules();
+        if (!binder_rules && !settings.has_resource_rules() && !settings.reflection) {
+            if (api_) api_->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);
+            return;
+        }
+        g_enabled_for_process = true;
+        bool binder_ready = false, resource_ready = false, reflection_ready = false;
         // The Zygisk API is guaranteed to be live in preAppSpecialize.  Hook
         // the boot-class native methods here, before post-specialization API
         // calls become implementation-defined.
         try {
-            if (settings.services || settings.features || settings.broadcasts) install_jni_hook(env_, api_);
+            if (binder_rules) binder_ready = install_jni_hook(env_, api_);
         } catch (...) {
             log_error("JNI hook setup failed; Binder filtering is skipped");
         }
         try {
-            resource_hook_ready_ = settings.resources && install_resource_hook(env_, api_);
+            resource_ready = settings.has_resource_rules() && install_resource_hook(env_, api_);
         } catch (...) {
-            resource_hook_ready_ = false;
             log_error("resource hook setup failed; resources stay visible");
         }
         try {
-            if (settings.reflection) install_field_hooks(env_, api_);
+            if (settings.reflection) reflection_ready = install_field_hooks(env_, api_);
         } catch (...) {
             log_error("field hook setup failed; LINEAGE_APK_PATH stays visible");
         }
-        log_info("enabled uid=%d process=%s", args->uid, g_process_name.data());
+        const auto process_name = jstr_to_str(env_, args->nice_name);
+        log_info("enabled uid=%d process=%.255s hooks binder=%d resources=%d reflection=%d",
+                 args->uid, process_name.c_str(), binder_ready, resource_ready, reflection_ready);
     }
 
     void postAppSpecialize(const zygisk::AppSpecializeArgs *) override {
         if (!g_enabled_for_process) return;
         try {
-            if (lh::active_config().services) clear_cache(env_);
+            if (lh::active_config().has_service_rules()) clear_cache(env_);
         } catch (...) {
             log_error("cache cleanup failed; continuing with binder instrumentation");
         }
-        log_info("active for %s (resource hide=%d)", g_process_name.data(),
-                 resource_hook_ready_ ? 1 : 0);
     }
 
     void preServerSpecialize(zygisk::ServerSpecializeArgs *) override {
@@ -131,7 +124,6 @@ public:
 private:
     zygisk::Api *api_ = nullptr;
     JNIEnv *env_ = nullptr;
-    bool resource_hook_ready_ = false;
 };
 
 REGISTER_ZYGISK_MODULE(LineageHideModule)

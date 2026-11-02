@@ -1,5 +1,7 @@
 # Device validation — partial
 
+Preview.5 preserves the previously tested EvoX map rule and reduces hook overhead. The changes have host regressions; a device reboot, renewed Duck scan and comparable startup/frame-time/idle-power checks remain pending. See [PERFORMANCE.md](PERFORMANCE.md) for the audited execution paths and costs. Earlier device observations below do not constitute validation of the new binary.
+
 A live check on 2026-11-02 used a G57 Power running Android 16 (API 36), Evolution X 16.0, Zygisk Next 1.5.2 and BakaSU/SUSFS 2.3.0. The installed preview.2 had no system-package snapshot: SELinux denied system_server writes to the `device:s0` output file passed through `cmd package`. Capturing through a pipe and publishing from the module shell produced a valid 495-package snapshot. Preview.3 includes that script fix; a reboot with the new ZIP has not yet been tested.
 
 After publishing the snapshot and restarting Duck Detector, logs confirmed hooks in its main and helper processes. Its Custom ROM report showed package/service/reflection/native-file checks clean, with one remaining framework-resource mapping heuristic across system/product/data devices. Root inspection found the ROM's framework resource APKs, product overlays and resource-cache idmaps; this signal also appeared in the earlier upstream-module report. SUSFS reported 64 paths and 2 maps registered. These observations do not establish all channel/scope combinations, universal ROM compatibility or absence of every detection signal.

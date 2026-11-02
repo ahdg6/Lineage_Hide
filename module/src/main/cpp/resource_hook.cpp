@@ -1,9 +1,9 @@
 #include "resource_hook.h"
 #include "config.h"
+#include "jni_strings.h"
 #include <algorithm>
 
 #include <cstdint>
-#include <cstring>
 
 #include "log.h"
 
@@ -26,15 +26,18 @@ bool is_lineage_resource_id(jint res_id) {
 
 bool is_lineage_def_package(JNIEnv *env, jstring def_package) {
     if (!env || !def_package) return false;
-    const char *chars = env->GetStringUTFChars(def_package, nullptr);
-    if (!chars) {
-        if (env->ExceptionCheck()) env->ExceptionClear();
+    const auto &packages = lh::active_config().resource_packages;
+    if (packages.empty()) return false;
+    const jsize length = env->GetStringLength(def_package);
+    if (env->ExceptionCheck()) { env->ExceptionClear(); return false; }
+    if (length <= 0 || !lh::resource_package_length_matches(static_cast<size_t>(length))) return false;
+    char buffer[255];
+    const auto name = lh::read_ascii(env, def_package, buffer, length);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
         return false;
     }
-    const auto &packages = lh::active_config().resource_packages;
-    const bool match = std::find(packages.begin(), packages.end(), chars) != packages.end();
-    env->ReleaseStringUTFChars(def_package, chars);
-    return match;
+    return std::find(packages.begin(), packages.end(), name) != packages.end();
 }
 
 // Every successful native hook takes the original function pointer; a null or
@@ -82,6 +85,7 @@ jstring hook_get_resource_entry_name(JNIEnv *env, jclass clazz, jlong ptr, jint 
 
 bool install_resource_hook(JNIEnv *env, zygisk::Api *api) {
     if (g_resource_hook_installed) return true;
+    if (!lh::active_config().has_resource_rules()) return false;
     if (!env || !api) return false;
 
     JNINativeMethod methods[] = {
@@ -136,7 +140,7 @@ bool install_resource_hook(JNIEnv *env, zygisk::Api *api) {
         log_error("AssetManager resource hook unavailable; resources stay visible");
         return false;
     }
-    log_info("AssetManager resource hook installed; configured resource packages hidden "
+    log_debug("AssetManager resource hook installed; configured resource packages hidden "
              "(identifier=%d value=%d name=%d)",
              identifier_ready ? 1 : 0, value_ready ? 1 : 0, g_original_name ? 1 : 0);
     return true;

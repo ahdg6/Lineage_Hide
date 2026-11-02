@@ -141,8 +141,14 @@ int main() {
     assert(hide_service("customservice")); assert(hide_feature("a.b"));
     assert(feature_length_matches(255)); assert(feature_length_matches(3));
     assert(!feature_length_matches(4)); assert(!feature_length_matches(256));
+    assert(resource_package_length_matches(std::string("lineageos.platform").size()));
+    assert(!resource_package_length_matches(7)); assert(!resource_package_length_matches(256));
+    assert(c.has_service_rules() && c.has_feature_rules() && c.has_broadcast_rules() && !c.has_resource_rules());
     assert(hide_feature(std::string(255, 'a'))); assert(hide_broadcast_action("test.ACTION"));
     c.services = c.features = c.broadcasts = false; set_active_config(c);
+    assert(!c.has_service_rules() && !c.has_feature_rules() && !c.has_broadcast_rules());
+    Config empty;
+    assert(!empty.has_service_rules() && !empty.has_feature_rules() && !empty.has_broadcast_rules() && !empty.has_resource_rules());
     assert(!hide_service("customrom")); assert(!hide_feature("a.b"));
     assert(!hide_broadcast_action("test.ACTION"));
     assert(save_config(c, error));

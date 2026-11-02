@@ -37,6 +37,8 @@ struct Parcel : _jobject {
 };
 std::vector<std::unique_ptr<Parcel>> parcels;
 bool exception = false;
+bool region_fails = false;
+size_t exception_checks = 0, region_reads = 0;
 _jthrowable failure;
 std::vector<jobject> requests;
 constexpr intptr_t Size=1, Position=2, SetPosition=3, ReadString=4, WriteString=5, ReadInt=6,
@@ -95,7 +97,7 @@ jobject call_static_object(JNIEnv *, jclass, jmethodID method, va_list) {
 }
 JNINativeInterface make_table() {
     JNINativeInterface t{};
-    t.ExceptionCheck=[](JNIEnv *)->jboolean{return exception;};
+    t.ExceptionCheck=[](JNIEnv *)->jboolean{++exception_checks; return exception;};
     t.ExceptionOccurred=[](JNIEnv *)->jthrowable{return exception ? &failure : nullptr;};
     t.ExceptionClear=[](JNIEnv *){exception=false;};
     t.Throw=[](JNIEnv *, jthrowable)->jint{exception=true;return 0;};
@@ -103,9 +105,13 @@ JNINativeInterface make_table() {
     t.PopLocalFrame=[](JNIEnv *, jobject o)->jobject{return o;};
     t.DeleteLocalRef=[](JNIEnv *, jobject){};
     t.GetStringLength=[](JNIEnv *, jstring s)->jsize{return static_cast<String *>(s)->data.size();};
-    t.GetStringChars=[](JNIEnv *, jstring s,jboolean *)->const jchar*{
-        return reinterpret_cast<const jchar *>(static_cast<String *>(s)->data.data());};
-    t.ReleaseStringChars=[](JNIEnv *, jstring,const jchar*){};
+    t.GetStringRegion=[](JNIEnv *, jstring s, jsize start, jsize length, jchar *out){
+        ++region_reads;
+        if (region_fails) { exception=true; return; }
+        const auto &data=static_cast<String *>(s)->data;
+        assert(start>=0 && length>=0 && static_cast<size_t>(start+length)<=data.size());
+        std::copy_n(data.data()+start, length, out);
+    };
     t.NewString=[](JNIEnv *,const jchar*s,jsize n)->jstring{
         return string(std::u16string(reinterpret_cast<const char16_t*>(s),n));};
     t.CallIntMethodV=call_int; t.CallVoidMethodV=call_void; t.CallObjectMethodV=call_object;
@@ -134,6 +140,31 @@ int main() {
     using namespace mock;
     auto table=make_table(); JNIEnv env{&table}; methods();
     auto config=lh::preset("lineage"); lh::set_active_config(config);
+    // Bounded string reads preserve exact matching without pinning/UTF copies.
+    char bounded[4];
+    assert(lh::read_ascii(&env,string("test"),bounded)=="test");
+    assert(lh::read_ascii(&env,string("tests"),bounded).empty());
+    assert(lh::read_ascii(&env,string(u"t\u00e9st"),bounded)=="t?st");
+    assert(lh::read_ascii(&env,nullptr,bounded).empty());
+    auto normal_feature=string(std::u16string(config.feature_names.front().size(),'x'));
+    auto hidden_feature=string(config.feature_names.front().c_str());
+    const auto strings_before=strings.size();
+    assert(filter_feature_read(&env,normal_feature)==normal_feature && strings.size()==strings_before);
+    assert(filter_feature_read(&env,hidden_feature)!=hidden_feature);
+    auto short_name=string("android");
+    const auto reads_before=region_reads;
+    assert(filter_feature_read(&env,short_name)==short_name);
+    assert(!is_lineage_def_package(&env,short_name));
+    assert(!is_hidden_field_name(&env,short_name));
+    assert(region_reads==reads_before);
+    assert(is_lineage_def_package(&env,string("lineageos.platform")));
+    assert(is_hidden_field_name(&env,string("LINEAGE_APK_PATH")));
+    assert(!is_hidden_field_name(&env,string("LINEAGE_APK_PATX")));
+    region_fails=true;
+    assert(filter_feature_read(&env,hidden_feature)==hidden_feature && !exception);
+    assert(!is_lineage_def_package(&env,string("lineageos.platform")) && !exception);
+    assert(!is_hidden_field_name(&env,string("LINEAGE_APK_PATH")) && !exception);
+    region_fails=false;
     // Service list: copy on first matched name, retain ordinary strings and byte count.
     Parcel reply; reply.integer(0,0); reply.integer(4,3);
     int end=reply.name(8,string("lineage.test"));
@@ -153,7 +184,7 @@ int main() {
     filter_list_reply(&env,&ordinary); assert(ordinary.detaches==0 && ordinary.writes==0);
     // Interface-local transaction IDs can collide: PM must not take the SM path.
     g_service_transactions.get_service=4; g_service_transactions.list_services=4;
-    g_package_transactions.has_system_feature=4; set_feature_filtering(true);
+    g_package_transactions.has_system_feature=4;
     g_original_transact_native=transact;
     Parcel request; auto namepos=request.name(0,string(kIPackageManagerDescriptor));
     request.name(namepos,string("org.lineageos.trust"));
@@ -168,7 +199,6 @@ int main() {
     const auto action=config.broadcast_actions.front();
     g_activity_transactions.broadcast_intent=4;
     g_activity_transactions.broadcast_intent_with_feature=5;
-    set_broadcast_filtering(true);
     for (bool utf8 : {false,true}) for (bool feature : {false,true}) {
         g_sdk_int.store(utf8 ? 36 : 29);
         Parcel broadcast;
@@ -195,9 +225,24 @@ int main() {
         hook_transact_native(&env,nullptr,feature ? 5 : 4,&broadcast,nullptr,0);
         assert(requests.back()==&broadcast && broadcast.pos==0 && !exception);
     }
-    // Unrelated transactions must bypass all parsing and preserve real exceptions.
+    // Unrelated IDs and one-way calls bypass even JNI exception/string checks.
+    const auto checks_before=exception_checks;
+    const auto regions_before=region_reads;
+    hook_transact_native(&env,nullptr,999,&request,nullptr,0);
+    assert(requests.back()==&request);
+    hook_transact_native(&env,nullptr,4,&request,nullptr,TF_ONE_WAY);
+    assert(requests.back()==&request);
+    assert(exception_checks==checks_before && region_reads==regions_before);
+    // A colliding but unrelated interface is also untouched.
+    Parcel unrelated_request;
+    unrelated_request.name(0,string("android.test.Unrelated"));
+    hook_transact_native(&env,nullptr,4,&unrelated_request,nullptr,0);
+    assert(requests.back()==&unrelated_request && unrelated_request.pos==0 && !exception);
+    // Preserve real exceptions for both candidate and unrelated transactions.
     exception=true;
     hook_transact_native(&env,nullptr,999,&request,nullptr,0);
+    assert(exception && requests.back()==&request);
+    hook_transact_native(&env,nullptr,4,&request,nullptr,0);
     assert(exception && requests.back()==&request); exception=false;
     // Failed class resolution never makes the reflection filter apply to all classes.
     _jclass unrelated;
@@ -209,8 +254,16 @@ int main() {
         for(int i=0;i<n;++i) m[i].fnPtr=i==2 ? reinterpret_cast<void*>(resource_name) : nullptr;
     };
     zygisk::internal::entry_impl<Capture>(&api,&env);
+    // Empty lists with enabled switches install nothing or inspect no request.
+    lh::set_active_config(lh::Config{});
+    const auto empty_checks=exception_checks;
+    assert(!install_jni_hook(&env,captured_api));
+    assert(!install_resource_hook(&env,captured_api));
+    hook_transact_native(&env,nullptr,4,&request,nullptr,0);
+    assert(requests.back()==&request && exception_checks==empty_checks);
+    lh::set_active_config(config);
     assert(install_resource_hook(&env,captured_api));
     assert(hook_get_resource_name(&env,nullptr,0,0x01010000)!=nullptr);
     assert(hook_get_resource_name(&env,nullptr,0,0x3f010000)==nullptr);
-    std::cout << "JNI regressions passed: owned replies, allocation failure, AIDL collisions, broadcast scope/encodings, partial hooks, reflection scope\n";
+    std::cout << "JNI regressions passed: fast bypass, bounded strings, empty rules, owned replies, allocation failure, AIDL collisions, broadcast scope/encodings, partial hooks, reflection scope\n";
 }

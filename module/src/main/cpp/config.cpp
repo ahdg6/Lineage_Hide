@@ -14,7 +14,7 @@
 namespace lh {
 namespace {
 Config current;
-std::bitset<256> feature_lengths, resource_ids;
+std::bitset<256> feature_lengths, resource_ids, resource_package_lengths;
 bool token(std::string_view s, size_t max) {
     return !s.empty() && s.size() <= max && std::all_of(s.begin(), s.end(), [](char c) {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
@@ -268,11 +268,13 @@ bool save_config(const Config &c, std::string &error) {
 }
 const Config &active_config() { return current; }
 void set_active_config(Config c) {
-    feature_lengths.reset(); resource_ids.reset();
+    feature_lengths.reset(); resource_ids.reset(); resource_package_lengths.reset();
     for (const auto &id : c.resource_ids) resource_ids.set(std::strtoul(id.c_str(), nullptr, 16));
     for (const auto &name : c.feature_names) if (name.size() < 256) feature_lengths.set(name.size());
+    for (const auto &name : c.resource_packages) if (name.size() < 256) resource_package_lengths.set(name.size());
     current = std::move(c);
 }
 bool resource_id_matches(uint32_t id) { return current.resources && resource_ids[id >> 24]; }
 bool feature_length_matches(size_t length) { return length < 256 && feature_lengths[length]; }
+bool resource_package_length_matches(size_t length) { return length < 256 && resource_package_lengths[length]; }
 } // namespace lh

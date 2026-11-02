@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 A configurable fork of [null07089/Lineage_Hide](https://github.com/null07089/Lineage_Hide), adding an offline KernelSU WebUI, editable LineageOS / Evolution X presets, per-package scope, channel controls and a native SUSFS path backend. GPL-3.0; upstream attribution is retained.
 
-**3.0.0-preview.4:** arm64 compilation, native host tests and browser integration are covered. An Android 16/EvoX check confirmed injection after fixing a SELinux-related startup failure. Adding the EvoX overlay map rule cleared Duck's remaining resource-map finding; its unavailable property-area probe still limits coverage. Wider device/ROM compatibility still requires validation. A ready system-package snapshot is not evidence that hooks are active in a target app.
+**3.0.0-preview.5:** cleans up hook overhead and unused kernel patch scripts; see the [runtime review](docs/PERFORMANCE.md). Host tests and arm64 builds cover the cleanup; an on-device reboot and performance comparison of this version remain pending. Earlier Android 16/EvoX checks confirmed injection after fixing a SELinux-related startup failure and cleared Duck's remaining resource-map finding with the EvoX map rule. Its unavailable property-area probe still limits coverage. A ready system-package snapshot is not evidence that hooks are active in a target app.
 
 ## Use
 
