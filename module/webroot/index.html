@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <meta name="color-scheme" content="light dark">
+  <title>Lineage Hide</title><link rel="stylesheet" href="style.css">
+</head>
+<body><main>
+  <header><div class="brand">LH<span>CONFIGURATION</span></div><span class="version">3.0 · preview</span></header>
+  <div class="intro"><p class="eyebrow">YOUR ROM. YOUR RULES.</p><h1>Lineage Hide<span class="dot">.</span></h1><p>为每个应用，选择恰好的隐藏范围。</p></div>
+  <div id="message" role="status" aria-live="polite">正在连接模块…</div>
+  <form id="settings"><fieldset id="fields" disabled>
+    <section class="card overview"><div><p class="eyebrow">MODULE STATUS</p><h2>模块规则</h2><p id="runtime">正在读取运行状态</p></div><label class="switch"><input id="enabled" type="checkbox" aria-label="启用模块规则"><span></span></label></section>
+    <section class="card"><div class="section-head"><span class="number">01</span><div><h2>ROM 预设</h2><p>选择起点，再按需要调整规则。</p></div></div>
+      <div class="preset-row"><select id="preset" aria-label="ROM 预设"><option value="lineage">LineageOS</option><option value="evox">Evolution X</option></select><button type="button" id="load-preset">载入规则</button></div>
+      <p class="hint">EvoX 包含 Lineage SDK 规则及 evolution / evox 服务、路径关键词。预设是可编辑起点，具体效果取决于 ROM 版本。</p><p class="tag" id="profile-label"></p>
+    </section>
+    <section class="card"><div class="section-head"><span class="number">02</span><div><h2>应用范围</h2><p>按包名匹配，覆盖该包各用户的普通应用进程。</p></div></div>
+      <label class="field">生效模式<select id="mode"><option value="all">全部三方应用</option><option value="include">仅名单内应用（白名单）</option><option value="exclude">排除名单内应用（黑名单）</option></select></label>
+      <p class="hint" id="scope-hint"></p>
+      <label class="field">应用名单<textarea id="package" rows="4" spellcheck="false" placeholder="com.example.app&#10;com.example.another"></textarea></label>
+      <div class="app-tools"><button type="button" id="load-apps">读取已安装应用</button><span id="selection-count" class="hint"></span></div>
+      <div id="app-picker" hidden><label class="field">筛选包名<input type="search" id="search" placeholder="搜索应用包名" autocomplete="off"></label><div id="apps" class="apps"></div></div>
+      <p class="hint">系统应用、核心组件、隔离进程和 SDK 沙箱不注入。空白名单不隐藏任何应用；空黑名单隐藏全部三方应用。选择器列出当前 Android 用户的三方应用，可手动填写其他用户的包名。</p>
+    </section>
+    <section class="card"><div class="section-head"><span class="number">03</span><div><h2>隐藏通道</h2><p>只开启需要的规则。</p></div></div>
+      <label class="toggle-row"><span>系统服务<small>服务查询、枚举与缓存</small></span><input id="services" type="checkbox"></label>
+      <label class="toggle-row"><span>系统特性<small>hasSystemFeature 与特性列表</small></span><input id="features" type="checkbox"></label>
+      <label class="toggle-row"><span>受保护广播<small>匹配配置中的完整 action 名称</small></span><input id="broadcasts" type="checkbox"></label>
+      <label class="toggle-row"><span>资源包<small>资源包名及 package ID</small></span><input id="resources" type="checkbox"></label>
+      <label class="toggle-row"><span>反射字段<small>AssetManager.LINEAGE_APK_PATH</small></span><input id="reflection" type="checkbox"></label>
+      <label class="toggle-row"><span>请求卸载模块挂载<small>Zygisk FORCE_DENYLIST_UNMOUNT</small></span><input id="force_unmount" type="checkbox"></label>
+    </section>
+    <section class="card"><details><summary>自定义规则 <span>ADVANCED</span></summary><p class="hint">每行一项，不支持通配符或正则。服务关键词及完整服务名不区分大小写，其余名称精确匹配。修改后保存为自定义配置。</p>
+      <label class="field">服务关键词<textarea id="service_keyword" rows="3" spellcheck="false"></textarea></label>
+      <label class="field">完整服务名<textarea id="exact_service" rows="2" spellcheck="false"></textarea></label>
+      <label class="field">完整系统特性名<textarea id="feature" rows="5" spellcheck="false"></textarea></label>
+      <label class="field">完整广播 Action<textarea id="broadcast" rows="5" spellcheck="false"></textarea></label>
+      <label class="field">资源包名<textarea id="resource_package" rows="2" spellcheck="false"></textarea></label>
+      <label class="field">资源包 ID（两位小写十六进制）<textarea id="resource_id" rows="2" spellcheck="false"></textarea></label>
+      <p class="hint">禁止 00 / 01 / 7f 等保留 ID。资源包名与 ID 应成对核实；错误规则可能影响应用功能。</p>
+    </details></section>
+    <section class="card"><div class="section-head"><span class="number">04</span><div><h2>原生路径视图</h2><p>由现有 SUSFS 内核过滤匹配文件及映射。</p></div></div>
+      <label class="toggle-row"><span>启用原生路径规则<small>默认开启 · 保存后重启设备</small></span><input id="native_paths" type="checkbox"></label>
+      <p id="paths-status" class="hint">正在读取路径处理状态</p>
+      <p class="hint">目前适配 BakaSU 的 SUSFS 2.3.0 接口。作用对象由内核与管理器的卸载策略决定；上方应用名单只控制 Zygisk 钩子，不能排除内核路径隐藏。</p>
+      <details><summary>路径规则 <span>SUSFS</span></summary>
+        <label class="field">路径名称关键词<textarea id="path_keyword" rows="3" spellcheck="false"></textarea></label>
+        <p class="hint">每行一项，至少 3 个字符。按名称查找系统只读目录中的文件；不是通配符或正则。</p>
+        <label class="field">隐藏文件的绝对路径<textarea id="hide_path" rows="4" spellcheck="false"></textarea></label>
+        <label class="field">过滤映射的绝对路径<textarea id="map_path" rows="3" spellcheck="false"></textarea></label>
+        <p class="hint">仅接受 /system、/system_ext、/product、/vendor、/odm 内的文件路径，不接受通配符、空路径段或 ..。系统更新后请重新预览匹配结果。</p>
+      </details>
+      <div class="app-tools"><button type="button" id="preview-paths">只读预览路径计划</button></div>
+      <pre id="path-plan" class="path-plan" hidden></pre>
+      <p class="hint">路径标记随本次启动保留。关闭、删除或修改规则后需正常重启，不能仅凭重开应用撤销旧标记。此配置由本模块应用，不修改原生 ksud 的持久 JSON。</p>
+    </section>
+    <section class="card caution"><details><summary>全局兼容处理 <span>REBOOT</span></summary>
+      <label class="toggle-row"><span>运行 Lineage 全局兼容脚本<small>默认关闭 · 与应用名单无关</small></span><input id="legacy_boot" type="checkbox"></label>
+      <p>使用固定 Lineage 规则全局改写运行时属性、bind mount 命令包装器；不会跟随 EvoX 预设或自定义规则。已移除原版的系统分区编辑和停用应用操作。</p>
+      <p>保存只影响下次启动。关闭后需重启清除临时挂载和运行时属性处理；模块总开关不会撤销本次已执行的操作。过去安装原版留下的磁盘修改或应用停用状态仍需单独恢复。</p>
+      <p id="legacy-status" class="hint"></p>
+    </details></section>
+    <section class="transfer"><button type="button" id="export">导出配置</button><button type="button" id="import">导入配置</button><input type="file" id="file" accept=".conf,.txt" hidden><button type="button" id="reload">重新读取</button></section>
+    <section id="export-panel" class="card" hidden><h2>配置文本</h2><p class="hint">此文本只包含模块规则和应用包名，不包含应用数据、UID、账号或授权。部分管理器不支持下载，可复制后保存到自己的备份位置。</p><label class="field">可复用配置<textarea id="export-text" rows="8" readonly spellcheck="false"></textarea></label><div class="app-tools"><button type="button" id="copy-export">复制配置文本</button><button type="button" id="download-export">下载 .conf 文件</button></div></section>
+    <div class="savebar"><div><strong id="dirty">配置已读取</strong><small>进程规则重开应用 · 路径规则重启设备</small></div><button type="submit" id="save">保存配置 <span>↗</span></button></div>
+  </fieldset></form>
+  <footer>配置跨模块升级保留 · 更新模块本身需要重启<br>应用名单控制 Zygisk 钩子；原生路径规则由 SUSFS 内核单独执行。</footer>
+</main><script type="module" src="app.js"></script></body></html>

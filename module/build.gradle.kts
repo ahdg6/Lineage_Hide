@@ -18,6 +18,7 @@ android {
             cmake {
                 cppFlags += listOf("-std=c++20", "-Wall", "-Wextra", "-fvisibility=hidden")
                 arguments += listOf("-DANDROID_STL=c++_static")
+                targets += listOf("lineage_hide", "configctl")
                 abiFilters += listOf("arm64-v8a")
             }
         }

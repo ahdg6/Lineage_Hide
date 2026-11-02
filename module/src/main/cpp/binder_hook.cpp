@@ -1,4 +1,5 @@
 #include "binder_hook.h"
+#include "config.h"
 #include "broadcast_filter.h"
 #include "feature_filter.h"
 #include "log.h"
@@ -59,6 +60,24 @@ struct ActivityTransactions {
 ActivityTransactions g_activity_transactions;
 std::atomic<bool> g_feature_filtering{false};
 std::atomic<bool> g_broadcast_filtering{false};
+
+// Internal Parcel inspection must see the original names. Otherwise the
+// nativeReadString hook can replace a feature before hasSystemFeature's
+// request predicate sees it, leaving the real request bytes unchanged.
+// Keep the guard thread-local and restore the previous state for nested
+// inspections, early returns and C++ exceptions.
+thread_local bool g_internal_parcel_read = false;
+class ScopedOriginalParcelRead {
+public:
+    ScopedOriginalParcelRead() noexcept : previous_(g_internal_parcel_read) {
+        g_internal_parcel_read = true;
+    }
+    ~ScopedOriginalParcelRead() noexcept { g_internal_parcel_read = previous_; }
+    ScopedOriginalParcelRead(const ScopedOriginalParcelRead &) = delete;
+    ScopedOriginalParcelRead &operator=(const ScopedOriginalParcelRead &) = delete;
+private:
+    bool previous_;
+};
 
 struct ParcelMethods {
     jclass cls = nullptr;
@@ -334,6 +353,7 @@ jstring replacement_for(JNIEnv *env, jstring value) {
 }
 
 jint interface_name_position(JNIEnv *env, jobject parcel, const char *descriptor) {
+    const ScopedOriginalParcelRead original_reads;
     if (!env || !parcel || !descriptor) return -1;
     const jint original_position = env->CallIntMethod(parcel, g_parcel_methods.data_position);
     if (env->ExceptionCheck() || original_position < 0) {
@@ -526,6 +546,7 @@ using NamePredicate = bool (*)(std::string_view);
 // initialization keeps the real service; package feature requests do not.
 jobject filtered_name_request(JNIEnv *env, jobject parcel, jint name_position,
                               NamePredicate hide, bool require_app_caller) {
+    const ScopedOriginalParcelRead original_reads;
     if (!g_parcel_methods.obtain || !g_parcel_methods.append_from || !g_parcel_methods.recycle ||
         env->ExceptionCheck()) return nullptr;
     if (env->PushLocalFrame(8) < 0) {
@@ -589,11 +610,10 @@ jobject filtered_name_request(JNIEnv *env, jobject parcel, jint name_position,
 // equal-length placeholder; the broadcast is then accepted as an ordinary,
 // unprotected one.  The copy is owned by this process, so writing is safe.
 constexpr jint kMaxBroadcastScanBytes = 4 * 1024;
-constexpr jint kMinBroadcastActionLength = 32;
-constexpr jint kMaxBroadcastActionLength = 80;
 
 bool scrub_broadcast_action_at(JNIEnv *env, jobject parcel, jint position, jmethodID read,
                                jmethodID write) {
+    const ScopedOriginalParcelRead original_reads;
     env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, position);
     if (env->ExceptionCheck()) {
         clear_jni_exception(env);
@@ -658,7 +678,7 @@ jobject filtered_broadcast_request(JNIEnv *env, jobject parcel) {
             clear_jni_exception(env);
             continue;
         }
-        if (length < kMinBroadcastActionLength || length > kMaxBroadcastActionLength) continue;
+        if (length < 0 || !lh::broadcast_length_matches(static_cast<size_t>(length))) continue;
         if (g_parcel_methods.read_string8 &&
             scrub_broadcast_action_at(env, copy, position, g_parcel_methods.read_string8,
                                       g_parcel_methods.write_string8)) {
@@ -693,6 +713,7 @@ jobject filtered_broadcast_request(JNIEnv *env, jobject parcel) {
 }
 
 bool filter_reply_string(JNIEnv *env, jobject parcel, jint limit) {
+    const ScopedOriginalParcelRead original_reads;
     const jint start = env->CallIntMethod(parcel, g_parcel_methods.data_position);
     if (env->ExceptionCheck() || start < 0 || start > limit - 4) return false;
     auto name = static_cast<jstring>(env->CallObjectMethod(parcel, g_parcel_methods.read_string));
@@ -804,6 +825,7 @@ ParcelReadStringFn g_original_parcel_read_string16 = nullptr;
 bool g_feature_read_hooks_installed = false;
 
 jstring filter_feature_read(JNIEnv *env, jstring value) {
+    if (g_internal_parcel_read) return value;
     if (!env || !value || env->ExceptionCheck()) return value;
     // Skip the extraction for strings that cannot be hidden feature names.
     const jsize length = env->GetStringLength(value);
@@ -811,8 +833,7 @@ jstring filter_feature_read(JNIEnv *env, jstring value) {
         clear_jni_exception(env);
         return value;
     }
-    if (length < static_cast<jsize>(kFeatureNameMinLength) ||
-        length > static_cast<jsize>(kFeatureNameMaxLength)) {
+    if (length < 0 || !lh::feature_length_matches(static_cast<size_t>(length))) {
         return value;
     }
     const std::string name = jstring_ascii(env, value);
@@ -876,9 +897,9 @@ jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data
         return g_original_transact_native(env, thiz, code, data_obj, reply_obj, flags);
     }
 
-    const bool is_list = is_list_transaction(env, code);
-    const bool is_debug = is_debug_transaction(env, code);
-    const bool is_lookup = is_lookup_transaction(code) && (flags & TF_ONE_WAY) == 0;
+    const bool is_list = lh::active_config().services && is_list_transaction(env, code);
+    const bool is_debug = lh::active_config().services && is_debug_transaction(env, code);
+    const bool is_lookup = lh::active_config().services && is_lookup_transaction(code) && (flags & TF_ONE_WAY) == 0;
     const bool feature_filtering = g_feature_filtering.load(std::memory_order_acquire);
     const bool is_has_feature = feature_filtering && g_package_transactions.has_system_feature > 0 &&
                                 code == g_package_transactions.has_system_feature &&

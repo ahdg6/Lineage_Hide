@@ -1,4 +1,17 @@
-# 更新日志 / Changelog
+# Changelog
+
+## 3.0.0-preview.1
+
+- Add an offline KernelSU WebUI with editable LineageOS and Evolution X presets.
+- Add all / include / exclude package scope, current-user app selection, channel toggles, configuration import/export and atomic persistent saves.
+- Read validated configuration through a Zygisk root companion at process startup; skip injection on missing/invalid configuration or system-package snapshot.
+- Preserve original Parcel names during internal Binder inspection so feature request filtering is not masked by the module's own read hook.
+- Support custom service keywords/names, feature names, broadcasts and resource package names/IDs; retain the fixed LINEAGE_APK_PATH reflection filter as a toggle.
+- Add a bounded native BakaSU/SUSFS 2.3.0 path adapter, editable path presets, read-only draft preview and partial-failure status. Kernel path marks remain independent of app scopes.
+- Retain runtime property and command-wrapper compatibility as an explicit default-off option; remove upstream partition edits and package disabling. Package scopes do not affect global actions or kernel rules.
+- Add native parser/scope/transport/storage tests, browser-to-native configuration integration tests, and a direct NDK build/package path.
+- Preview: Android compilation and host/browser tests do not establish device injection or ROM compatibility. Do not treat this as a hardware-validated release.
+
 
 ## 2.1
 

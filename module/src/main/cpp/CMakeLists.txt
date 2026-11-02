@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.22.1)
 project(LineageHide)
 
 add_library(lineage_hide SHARED
+    config.cpp
+    config_transport.cpp
     entry.cpp
     service_filter.cpp
     service_cache.cpp
@@ -43,3 +45,13 @@ endif()
 set_target_properties(lineage_hide PROPERTIES
     OUTPUT_NAME "lineage_hide"
 )
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+target_compile_features(lineage_hide PRIVATE cxx_std_20)
+add_executable(configctl configctl.cpp config.cpp susfs_backend.cpp)
+target_compile_options(configctl PRIVATE -Wall -Wextra -fvisibility=hidden)
+if (CMAKE_STRIP)
+    add_custom_command(TARGET configctl POST_BUILD
+        COMMAND ${CMAKE_STRIP} --strip-unneeded $<TARGET_FILE:configctl>)
+endif()

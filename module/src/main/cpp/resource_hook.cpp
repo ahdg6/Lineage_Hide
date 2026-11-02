@@ -1,4 +1,7 @@
 #include "resource_hook.h"
+#include "config.h"
+#include <algorithm>
+#include <cstdlib>
 
 #include <cstdint>
 #include <cstring>
@@ -6,11 +9,6 @@
 #include "log.h"
 
 namespace {
-// LineageOS builds its platform SDK resource APK with
-// --allow-reserved-package-id --package-id 63 (0x3f).
-constexpr jint kLineageResourcePackageId = 0x3f;
-constexpr const char *kLineageResourcePackage = "lineageos.platform";
-
 using GetResourceIdentifierFn = jint (*)(JNIEnv *, jclass, jlong, jstring, jstring, jstring);
 using GetResourceValueFn = jint (*)(JNIEnv *, jclass, jlong, jint, jshort, jobject, jboolean);
 using GetResourceNameFn = jstring (*)(JNIEnv *, jclass, jlong, jint);
@@ -24,7 +22,10 @@ GetResourceNameFn g_original_entry_name = nullptr;
 bool g_resource_hook_installed = false;
 
 bool is_lineage_resource_id(jint res_id) {
-    return (static_cast<uint32_t>(res_id) >> 24) == static_cast<uint32_t>(kLineageResourcePackageId);
+    const auto id = static_cast<uint32_t>(res_id) >> 24;
+    for (const auto &value : lh::active_config().resource_ids)
+        if (id == std::strtoul(value.c_str(), nullptr, 16)) return true;
+    return false;
 }
 
 bool is_lineage_def_package(JNIEnv *env, jstring def_package) {
@@ -34,7 +35,8 @@ bool is_lineage_def_package(JNIEnv *env, jstring def_package) {
         if (env->ExceptionCheck()) env->ExceptionClear();
         return false;
     }
-    const bool match = std::strcmp(chars, kLineageResourcePackage) == 0;
+    const auto &packages = lh::active_config().resource_packages;
+    const bool match = std::find(packages.begin(), packages.end(), chars) != packages.end();
     env->ReleaseStringUTFChars(def_package, chars);
     return match;
 }
@@ -135,7 +137,7 @@ bool install_resource_hook(JNIEnv *env, zygisk::Api *api) {
     }
 
     g_resource_hook_installed = true;
-    log_info("AssetManager resource hook installed; lineageos.platform (0x3f) hidden "
+    log_info("AssetManager resource hook installed; configured resource packages hidden "
              "(identifier=%d value=%d name=%d)",
              identifier_ready ? 1 : 0, value_ready ? 1 : 0, g_original_name ? 1 : 0);
     return true;
