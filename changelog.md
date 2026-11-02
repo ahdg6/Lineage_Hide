@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0-preview.4
+
+- Add `/product/overlay/Pixelframework-res.apk` to the EvoX preset's mapping list. This uses the existing SUSFS map adapter and does not hide the file path or unload resources.
+- A live single-rule test on Android 16/EvoX changed Duck 1099's `mapsInjection` from one three-device finding to Clean. Custom ROM became Info with no detected ROM/runtime/native signatures; the existing unavailable property-area probe still limits coverage.
+- Existing configurations remain untouched on upgrade. Add the map path manually or review/load the updated EvoX preset to adopt it.
+
 ## 3.0.0-preview.3
 
 - Fix system-package snapshot creation under enforcing SELinux: capture `cmd package` output through a pipe instead of passing a private `/dev` output file to system_server.

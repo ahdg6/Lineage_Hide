@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 A configurable fork of [null07089/Lineage_Hide](https://github.com/null07089/Lineage_Hide), adding an offline KernelSU WebUI, editable LineageOS / Evolution X presets, per-package scope, channel controls and a native SUSFS path backend. GPL-3.0; upstream attribution is retained.
 
-**3.0.0-preview.3:** arm64 compilation, native host tests and browser integration are covered. An Android 16/EvoX check confirmed injection after fixing a SELinux-related startup failure; one framework-overlay mapping signal remains. Wider device/ROM compatibility still requires validation. A ready system-package snapshot is not evidence that hooks are active in a target app.
+**3.0.0-preview.4:** arm64 compilation, native host tests and browser integration are covered. An Android 16/EvoX check confirmed injection after fixing a SELinux-related startup failure. Adding the EvoX overlay map rule cleared Duck's remaining resource-map finding; its unavailable property-area probe still limits coverage. Wider device/ROM compatibility still requires validation. A ready system-package snapshot is not evidence that hooks are active in a target app.
 
 ## Use
 
@@ -45,9 +45,9 @@ Both presets include editable filename keywords, explicit hidden files and mappi
 
 The adapter currently requires `/data/adb/ksud susfs`, **SUSFS 2.3.0** and the relevant enabled kernel features. Unsupported devices report that state while retaining process-local filtering; no legacy-script fallback is executed. The adapter never calls `ksud susfs config` or changes the manager's persistent JSON.
 
-Only regular files under `/system`, `/system_ext`, `/product`, `/vendor`, `/odm` are eligible. Symlinks are not followed. Keywords match basenames, with explicit path validation rejecting traversal, directories, wildcards and shell syntax. Defaults include inherited Lineage paths such as `libstagefright.so`; review the preview before use. Maps are configured independently; scanned paths do not automatically become map rules.
+Only regular files under `/system`, `/system_ext`, `/product`, `/vendor`, `/odm` are eligible. Symlinks are not followed. Keywords match basenames, with explicit path validation rejecting traversal, directories, wildcards and shell syntax. Defaults include inherited Lineage paths such as `libstagefright.so`; review the preview before use. Maps are configured independently; scanned paths do not automatically become map rules. The EvoX preset also includes `/product/overlay/Pixelframework-res.apk` as a **map-only** rule, preserving resource loading. Existing configurations are retained on update: add this path under mapping rules, or load/review the updated EvoX preset and save. Missing files on other builds are skipped.
 
-**Application allow/deny lists do not scope kernel marks.** Visibility depends on kernel/manager unmount policy. Status distinguishes unsupported, applied, failed and partially applied operations. Successfully registered marks survive a later failure until reboot. Logs are in `/dev/lineage_hide/paths.log`. This adapter is not yet device-validated; see [backend details](docs/SUSFS-BACKEND.md).
+**Application allow/deny lists do not scope kernel marks.** Visibility depends on kernel/manager unmount policy. Status distinguishes unsupported, applied, failed and partially applied operations. Successfully registered marks survive a later failure until reboot. Logs are in `/dev/lineage_hide/paths.log`. The adapter has a limited Android 16/EvoX device check; see [backend details](docs/SUSFS-BACKEND.md).
 
 ## Global compatibility option
 

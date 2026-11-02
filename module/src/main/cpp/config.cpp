@@ -56,6 +56,9 @@ Config preset(std::string_view name) {
     if (name == "evox") {
         c.service_keywords = {"lineage", "evolution", "evox"};
         c.path_keywords = {"lineage", "gapps", "evolution", "evox"};
+        // Keep resource loading intact; only suppress this overlay's map view.
+        // Together with the framework APK and idmap it exposes three devices.
+        c.map_paths.push_back("/product/overlay/Pixelframework-res.apk");
     }
     return c;
 }

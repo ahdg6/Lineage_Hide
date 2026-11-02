@@ -4,7 +4,7 @@
 
 基于 [null07089/Lineage_Hide](https://github.com/null07089/Lineage_Hide) 的可配置 fork。提供 KernelSU WebUI、LineageOS / Evolution X 预设、应用黑白名单、自定义进程内规则及原生 SUSFS 路径后端。保留上游 GPL-3.0 许可证及作者署名。
 
-**当前版本：3.0.0-preview.3。** 已完成 arm64 编译、主机 native 测试及浏览器与真实配置工具的联调；在 Android 16/EvoX 实机上定位并修复了 SELinux 导致的启动清单失败，已确认 Duck 主进程及辅助进程注入；仍有一条 framework 资源覆盖层映射提示，完整兼容性验收尚未完成。WebUI 的“清单就绪”只表示启动清单存在，不代表目标应用已成功安装 hooks。
+**当前版本：3.0.0-preview.4。** 已完成 arm64 编译、主机 native 测试及浏览器与真实配置工具的联调；在 Android 16/EvoX 实机上定位并修复了 SELinux 导致的启动清单失败，已确认 Duck 主进程及辅助进程注入；补充 EvoX 覆盖 APK 的映射规则后，Duck 的 mapsInjection 已为 Clean；属性区探针仍不可用，完整兼容性验收尚未完成。WebUI 的“清单就绪”只表示启动清单存在，不代表目标应用已成功安装 hooks。
 
 ## 使用
 
@@ -48,9 +48,9 @@ LineageOS 预设包含上游 Lineage 服务、SDK 特性、广播、资源和反
 
 当前后端仅支持 `/data/adb/ksud susfs` 提供的 **SUSFS 2.3.0** 接口及所需功能。没有该接口时报告不支持，进程内规则仍可使用，不会回退执行旧版全局脚本。路径处理不调用 `ksud susfs config`，不改写原生管理器的持久 JSON。
 
-只扫描 `/system`、`/system_ext`、`/product`、`/vendor`、`/odm` 的普通文件，不跟随符号链接。关键词仅匹配文件名；显式路径逐段校验，拒绝越界、目录、通配符和 Shell 字符。预设沿用 Lineage 路径，包括 `libstagefright.so`；请先预览实际匹配项。映射列表独立配置，关键词扫描不自动添加映射规则。
+只扫描 `/system`、`/system_ext`、`/product`、`/vendor`、`/odm` 的普通文件，不跟随符号链接。关键词仅匹配文件名；显式路径逐段校验，拒绝越界、目录、通配符和 Shell 字符。预设沿用 Lineage 路径，包括 `libstagefright.so`；请先预览实际匹配项。映射列表独立配置，关键词扫描不自动添加映射规则。EvoX 预设另含 `/product/overlay/Pixelframework-res.apk` 的**仅映射规则**，保留资源加载。升级保留已有配置；需要此规则时可在映射列表中手动添加该路径，或重新载入并检查 EvoX 预设后保存。其他构建不存在此文件时跳过。
 
-**应用黑白名单不控制这些内核标记。** 实际可见性由内核和管理器的卸载策略决定；界面会显示未执行、不支持、成功、失败或部分成功。失败后已注册的标记仍保留到重启，日志为 `/dev/lineage_hide/paths.log`。后端仍待实机验收，范围与限制见 [SUSFS-BACKEND.md](docs/SUSFS-BACKEND.md)。
+**应用黑白名单不控制这些内核标记。** 实际可见性由内核和管理器的卸载策略决定；界面会显示未执行、不支持、成功、失败或部分成功。失败后已注册的标记仍保留到重启，日志为 `/dev/lineage_hide/paths.log`。后端已在 Android 16/EvoX 上完成有限实测，范围与限制见 [SUSFS-BACKEND.md](docs/SUSFS-BACKEND.md)。
 
 ## 全局兼容开关
 
