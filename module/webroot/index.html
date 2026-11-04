@@ -45,6 +45,8 @@
     <section class="card"><div class="section-head"><span class="number">04</span><div><h2>原生路径视图</h2><p>由现有 SUSFS 内核过滤匹配文件及映射。</p></div></div>
       <label class="toggle-row"><span>启用原生路径规则<small>默认开启 · 保存后重启设备</small></span><input id="native_paths" type="checkbox"></label>
       <p id="paths-status" class="hint">正在读取路径处理状态</p>
+      <p id="paths-lifetime" class="hint">正在读取生命周期状态</p>
+      <p id="paths-effect" class="hint">应用侧效果：未验证</p>
       <p class="hint">目前适配 BakaSU 的 SUSFS 2.3.0 接口。作用对象由内核与管理器的卸载策略决定；上方应用名单只控制 Zygisk 钩子，不能排除内核路径隐藏。</p>
       <details><summary>路径规则 <span>SUSFS</span></summary>
         <label class="field">路径名称关键词<textarea id="path_keyword" rows="3" spellcheck="false"></textarea></label>
@@ -55,7 +57,7 @@
       </details>
       <div class="app-tools"><button type="button" id="preview-paths">只读预览路径计划</button></div>
       <pre id="path-plan" class="path-plan" hidden></pre>
-      <p class="hint">路径标记随本次启动保留。关闭、删除或修改规则后需正常重启，不能仅凭重开应用撤销旧标记。此配置由本模块应用，不修改原生 ksud 的持久 JSON。</p>
+      <p class="hint">模块通过持有文件引用防止已登记对象被缓存回收；保活进程退出或路径被替换后不保证标记有效。关闭、删除或修改规则后需正常重启，重开应用不能保证撤销旧标记。此配置由本模块应用，不修改原生 ksud 的持久 JSON。</p>
     </section>
     <section class="card caution"><details><summary>全局兼容处理 <span>REBOOT</span></summary>
       <label class="toggle-row"><span>运行 Lineage 全局兼容脚本<small>默认关闭 · 与应用名单无关</small></span><input id="legacy_boot" type="checkbox"></label>

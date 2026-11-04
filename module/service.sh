@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# Publish system-package scope, apply the configured SUSFS adapter, then optional legacy actions.
+# Retain/register native paths, publish system-package scope, then optional legacy actions.
 MODDIR=${0%/*}
 CTL="$MODDIR/bin/configctl"
 RUNTIME=/dev/lineage_hide
@@ -14,6 +14,9 @@ case "$(getprop ro.evolution.version) $(getprop ro.build.display.id) $(getprop r
     *[Ee]volution*|*[Ee]vo[Xx]*) profile=evox ;;
 esac
 "$CTL" init "$profile" >/dev/null || exit 1
+# Acquire references and register before waiting on PackageManager. The helper
+# returns only after the idle keeper has acknowledged retaining the inodes.
+"$CTL" apply-paths || echo 'SUSFS path application failed; see KernelSU WebUI status'
 # No fallback injection while PackageManager is unavailable. Retry <= 3 min.
 attempt=0
 while [ "$attempt" -lt 60 ]; do
@@ -33,7 +36,6 @@ while [ "$attempt" -lt 60 ]; do
 done
 unset packages
 rm -f "$RUNTIME/packages.tmp"
-"$CTL" apply-paths || echo 'SUSFS path application failed; see KernelSU WebUI status'
 if "$CTL" legacy-boot; then
     echo started > "$RUNTIME/legacy_boot"
     /system/bin/sh "$MODDIR/scripts/legacy-service.sh" > "$RUNTIME/legacy.log" 2>&1

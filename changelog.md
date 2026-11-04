@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.0-preview.6
+
+- Retain O_PATH references before SUSFS registration and hand them to one idle keeper without a reference gap. This prevents ordinary eviction of the registered inodes while the keeper lives; no timed rescans, app-start loops or kernel patches are added.
+- Start native registration before PackageManager waits. Bound reference counts, reject symlinks/writable mounts, preserve partial receipts and prevent duplicate keepers. Add uninstall cleanup.
+- Separate historical registration counts, live reference health/configuration and unverified target-app visibility in the WebUI. Detect keeper loss and replaced path bindings; reboot remains required for rule changes.
+- Add ASan/UBSan lifetime, handoff, replacement, process-loss and IPC tests plus browser regressions. Device observations and remaining limitations are recorded in `docs/DEVICE-VALIDATION.md`.
+
 ## 3.0.0-preview.5
 
 - Skip JNI inspection for unrelated Binder transaction IDs and one-way calls; retain descriptor validation for candidate IDs and preserve real Binder exceptions.

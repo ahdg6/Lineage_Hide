@@ -62,10 +62,11 @@ Additional commands:
 ```sh
 "$CTL" path-plan                  # read-only plan from saved configuration
 "$CTL" path-plan "$(cat draft.conf)" # read-only plan from draft
-"$CTL" apply-paths                # register saved rules; normally boot service only
+"$CTL" apply-paths                # acquire refs, register, await keeper ACK; boot service normally
+"$CTL" stop-paths                 # release refs; does NOT guarantee old marks are cleared
 ```
 
-The WebUI never calls `apply-paths`; saving only stores settings. Status and logs describe the latest attempt, not a verified app view. See [SUSFS backend](SUSFS-BACKEND.md) for version gates and partial-application semantics.
+The WebUI never calls `apply-paths`; saving only stores settings. Status separates the latest registration receipt, live reference-holder health and unverified app visibility. Existing keepers reject duplicate application; saved path changes require reboot. Uninstall requests `stop-paths`. See [SUSFS backend](SUSFS-BACKEND.md) for version gates and partial-application semantics.
 
 The companion reads configuration and the volatile system-package list afresh for each eligible process, through bounded length-prefixed frames and socket timeouts. Missing, invalid, truncated or oversized data skips injection. PackageManager must successfully enumerate system packages and include the Android framework package before the snapshot is published. The snapshot is generated at boot; changes to system package classification require a reboot.
 

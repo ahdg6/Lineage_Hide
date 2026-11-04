@@ -2,6 +2,7 @@
 ui_print "Lineage Hide • configurable fork"
 [ "$ARCH" = arm64 ] || abort "Only arm64 is supported"
 set_perm "$MODPATH/service.sh" 0 0 0755
+set_perm "$MODPATH/uninstall.sh" 0 0 0755
 set_perm "$MODPATH/scripts/legacy-service.sh" 0 0 0755
 set_perm_recursive "$MODPATH/bin" 0 0 0755 0755
 set_perm_recursive "$MODPATH/zygisk" 0 0 0755 0644

@@ -12,7 +12,7 @@ writeFileSync(join(temp, 'runtime/system_packages.txt'), 'android\ncom.android.s
 const cpp = join(root, 'module/src/main/cpp');
 const ctl = join(temp, 'configctl');
 execFileSync(process.env.CXX || 'c++', ['-std=c++20', '-DLH_HOST_TEST', `-DLH_STATE_DIR="${temp}/state"`,
-  `-DLH_RUNTIME_DIR="${temp}/runtime"`, ...['config.cpp', 'configctl.cpp', 'susfs_backend.cpp'].map(name => join(cpp, name)), '-o', ctl]);
+  `-DLH_RUNTIME_DIR="${temp}/runtime"`, ...['config.cpp', 'configctl.cpp', 'susfs_backend.cpp', 'path_keeper.cpp'].map(name => join(cpp, name)), '-o', ctl]);
 execFileSync(ctl, ['init', 'lineage']);
 const server = createServer((req, res) => {
   const path = join(root, 'module/webroot', req.url === '/' ? 'index.html' : req.url);
@@ -48,6 +48,18 @@ try {
   assert.equal(await page.locator('#legacy_boot').isChecked(), false);
   assert.match(await page.locator('#path_keyword').inputValue(), /lineage\ngapps/);
   assert.match(await page.locator('#runtime').textContent(), /清单已就绪/);
+  assert.match(await page.locator('#paths-effect').textContent(), /未验证/);
+  // A saved receipt must never masquerade as current maintenance or app proof.
+  writeFileSync(join(temp, 'runtime/paths.status'), 'paths_status=applied\npaths_count=64\nmaps_count=3\n');
+  await page.click('#reload');
+  await page.waitForFunction(() => document.querySelector('#paths-lifetime').textContent.includes('未建立引用保活'));
+  assert.match(await page.locator('#paths-status').textContent(), /最近登记回执.*64 个路径 \/ 3 个映射/);
+  assert.match(await page.locator('#paths-effect').textContent(), /未验证/);
+  writeFileSync(join(temp, 'runtime/paths.status'), 'paths_status=applied\npaths_count=64\nmaps_count=3\npaths_lifetime_mode=inode_refs\n');
+  await page.click('#reload');
+  await page.waitForFunction(() => document.querySelector('#paths-lifetime').textContent.includes('无法确认保活'));
+  assert.match(await page.locator('#paths-effect').textContent(), /未验证/);
+  rmSync(join(temp, 'runtime/paths.status'));
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.selectOption('#mode', 'include');
   await page.click('#load-apps');

@@ -28,7 +28,9 @@ class BootTests(unittest.TestCase):
 shift 4
 exec "$@"
 ''')
-                tool('cmd', '''# Binder's remote system_server must receive a pipe, not a private file.
+                tool('cmd', '''# Native references must be ready before any PackageManager retries.
+[ -f "$LH_TEST_BASE/native-ready" ] || exit 2
+# Binder's remote system_server must receive a pipe, not a private file.
 [ -p /proc/self/fd/1 ] || exit 2
 n=$(cat "$LH_TEST_BASE/attempts" 2>/dev/null || echo 0)
 n=$((n+1)); echo "$n" > "$LH_TEST_BASE/attempts"
@@ -40,7 +42,8 @@ fi
 ''')
                 tool('configctl', '''echo "$*" >> "$LH_TEST_BASE/control.log"
 case "$1" in
-init|apply-paths) exit 0 ;;
+init) exit 0 ;;
+apply-paths) touch "$LH_TEST_BASE/native-ready"; exit 0 ;;
 legacy-boot) exit 1 ;;
 *) exit 2 ;;
 esac

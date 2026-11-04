@@ -16,5 +16,5 @@ class RunnerTests(unittest.TestCase):
             subprocess.run([os.environ.get('CXX', 'c++'), '-std=c++20', '-Wall', '-Wextra', '-Werror',
                 '-DLH_HOST_TEST', '-DLH_RUNNER_TEST', '-fsanitize=address,undefined',
                 '-fno-omit-frame-pointer', '-g', '-I', str(CPP), str(ROOT / 'tests/runner_test.cpp'),
-                str(CPP / 'config.cpp'), '-o', str(target)], check=True)
+                str(CPP / 'config.cpp'), str(CPP / 'path_keeper.cpp'), '-o', str(target)], check=True)
             subprocess.run([str(target)], check=True, timeout=15)

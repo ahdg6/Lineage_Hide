@@ -1,6 +1,6 @@
 id=lineage_hide
 name=Lineage Hide · Configurable
-version=3.0.0-preview.5
-versionCode=300005
+version=3.0.0-preview.6
+versionCode=300006
 author=GitHub@null07089, ahdg6
 description=Configurable ROM hiding with KernelSU WebUI, LineageOS/EvoX presets and app scope / 可配置 ROM 隐藏与应用名单

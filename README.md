@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 A configurable fork of [null07089/Lineage_Hide](https://github.com/null07089/Lineage_Hide), adding an offline KernelSU WebUI, editable LineageOS / Evolution X presets, per-package scope, channel controls and a native SUSFS path backend. GPL-3.0; upstream attribution is retained.
 
-**3.0.0-preview.5:** cleans up hook overhead and unused kernel patch scripts; see the [runtime review](docs/PERFORMANCE.md). Host tests and arm64 builds cover the cleanup; an on-device reboot and performance comparison of this version remain pending. Earlier Android 16/EvoX checks confirmed injection after fixing a SELinux-related startup failure and cleared Duck's remaining resource-map finding with the EvoX map rule. Its unavailable property-area probe still limits coverage. A ready system-package snapshot is not evidence that hooks are active in a target app.
+**3.0.0-preview.6:** fixes the native backend's one-shot inode lifetime design by retaining O_PATH references in one idle process. Registration receipts, live reference health and unverified application visibility are reported separately. There is no periodic re-marking or kernel patch. See [backend design and limits](docs/SUSFS-BACKEND.md), [runtime costs](docs/PERFORMANCE.md) and [device validation](docs/DEVICE-VALIDATION.md). A ready package snapshot or registration count does not prove active hooks or hidden files in a target app.
 
 ## Use
 
@@ -47,7 +47,7 @@ The adapter currently requires `/data/adb/ksud susfs`, **SUSFS 2.3.0** and the r
 
 Only regular files under `/system`, `/system_ext`, `/product`, `/vendor`, `/odm` are eligible. Symlinks are not followed. Keywords match basenames, with explicit path validation rejecting traversal, directories, wildcards and shell syntax. Defaults include inherited Lineage paths such as `libstagefright.so`; review the preview before use. Maps are configured independently; scanned paths do not automatically become map rules. The EvoX preset also includes `/product/overlay/Pixelframework-res.apk` as a **map-only** rule, preserving resource loading. Existing configurations are retained on update: add this path under mapping rules, or load/review the updated EvoX preset and save. Missing files on other builds are skipped.
 
-**Application allow/deny lists do not scope kernel marks.** Visibility depends on kernel/manager unmount policy. Status distinguishes unsupported, applied, failed and partially applied operations. Successfully registered marks survive a later failure until reboot. Logs are in `/dev/lineage_hide/paths.log`. The adapter has a limited Android 16/EvoX device check; see [backend details](docs/SUSFS-BACKEND.md).
+**Application allow/deny lists do not scope kernel marks.** Visibility depends on kernel/manager unmount policy. Status separates the latest registration outcome from live reference retention and actual visibility, which the helper leaves unverified. References protect the same mounted inodes from ordinary cache eviction while the keeper lives; a killed keeper or replaced mount/file is outside that guarantee. Reboot to apply changed rules or clear old marks. Logs are in `/dev/lineage_hide/paths.log`. The adapter has a limited Android 16/EvoX device check; see [backend details](docs/SUSFS-BACKEND.md).
 
 ## Global compatibility option
 

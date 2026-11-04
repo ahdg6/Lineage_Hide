@@ -39,13 +39,26 @@ async function status() {
     $('runtime').textContent = text.includes('system_list_ready=1') ? '系统应用清单已就绪 · 等待应用验证' : '系统应用清单未就绪 · 暂停注入';
     $('legacy-status').textContent = '本次启动：' + (text.match(/^legacy_boot=(.*)$/m)?.[1] ?? '未知');
     const pathState = text.match(/^paths_status=(.*)$/m)?.[1] ?? 'not_started';
-    const states = {not_started: '尚无处理回执', disabled: '路径处理已关闭', applied: '路径注册完成，实际视图效果待验证',
-      partial: '部分路径注册成功；旧标记需重启清除，请检查 paths.log',
-      failed: '路径处理失败，请检查 paths.log', unsupported: '未找到支持的 SUSFS 后端'};
+    const states = {not_started: '尚无登记回执', disabled: '未执行登记（已关闭）', applied: '登记命令已完成',
+      partial: '部分登记成功，请检查 paths.log',
+      failed: '登记失败，请检查 paths.log', unsupported: '未找到支持的 SUSFS 后端'};
     const counts = ['paths_count', 'maps_count'].map(key => text.match(new RegExp(`^${key}=(\\d+)$`, 'm'))?.[1]);
-    $('paths-status').textContent = '本次启动：' + (states[pathState] ?? pathState) +
+    $('paths-status').textContent = '最近登记回执：' + (states[pathState] ?? pathState) +
       (counts.every(value => value !== undefined) ? ` · ${counts[0]} 个路径 / ${counts[1]} 个映射` : '');
-  } catch { $('runtime').textContent = '无法读取启动状态'; $('paths-status').textContent = '无法读取路径处理状态'; }
+    const lifetime = text.match(/^paths_lifetime=(.*)$/m)?.[1] ?? 'unknown';
+    const held = text.match(/^paths_pinned_count=(\d+)$/m)?.[1];
+    const lifetimes = {held: '文件引用保活中', changed: '路径对象已变化，请重启重新登记',
+      unavailable: '无法确认保活，旧回执不能代表当前效果', unmanaged: '只有一次性登记，未建立引用保活',
+      inactive: '未启动或无需保活', unknown: '无法读取'};
+    $('paths-lifetime').textContent = '生命周期：' + (lifetimes[lifetime] ?? lifetimes.unknown) +
+      (held !== undefined ? ` · ${held} 个文件引用` : '');
+    if (text.includes('paths_config_current=no\n')) $('paths-lifetime').textContent += ' · 路径配置有变更，重启后应用';
+    if (text.includes('paths_config_current=unknown\n')) $('paths-lifetime').textContent += ' · 无法核对已保存配置';
+    $('paths-effect').textContent = '应用侧效果：未验证。需分别检查目标应用首次读取与持续运行；登记数量、保活状态均不代表检测通过。';
+  } catch {
+    $('runtime').textContent = '无法读取启动状态'; $('paths-status').textContent = '无法读取登记回执';
+    $('paths-lifetime').textContent = '生命周期：无法读取'; $('paths-effect').textContent = '应用侧效果：未验证';
+  }
 }
 async function reload() {
   try {

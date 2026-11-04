@@ -19,12 +19,12 @@ class ConfigTests(unittest.TestCase):
                   '-DLH_HOST_TEST', f'-DLH_STATE_DIR="{cls.path}/state"',
                   f'-DLH_RUNTIME_DIR="{cls.path}/runtime"', '-I', str(CPP)]
         cls.ctl = cls.path / 'configctl'
-        subprocess.run(common + [str(CPP / name) for name in ['config.cpp', 'configctl.cpp', 'susfs_backend.cpp']]
+        subprocess.run(common + [str(CPP / name) for name in ['config.cpp', 'configctl.cpp', 'susfs_backend.cpp', 'path_keeper.cpp']]
                        + ['-o', str(cls.ctl)], check=True)
         cls.native = cls.path / 'config_test'
         subprocess.run(common + ['-fsanitize=address,undefined', '-fno-omit-frame-pointer', '-g',
             str(ROOT / 'tests/config_test.cpp')] + [str(CPP / name) for name in
-            ['config.cpp', 'config_transport.cpp', 'service_filter.cpp', 'feature_filter.cpp', 'broadcast_filter.cpp', 'susfs_backend.cpp']]
+            ['config.cpp', 'config_transport.cpp', 'service_filter.cpp', 'feature_filter.cpp', 'broadcast_filter.cpp', 'susfs_backend.cpp', 'path_keeper.cpp']]
             + ['-o', str(cls.native)], check=True)
 
     @classmethod

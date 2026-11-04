@@ -1,4 +1,5 @@
 #include "susfs_backend.h"
+#include "path_keeper.h"
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -106,25 +107,6 @@ bool runtime_dir(std::string &error) {
         error = "Unsafe runtime directory"; return false;
     }
     return true;
-}
-
-bool write_runtime(const char *name, const std::string &text) {
-    std::string tmp = std::string(LH_RUNTIME_DIR) + "/.paths.XXXXXX";
-    int fd = mkstemp(tmp.data());
-    if (fd < 0) return false;
-    bool ok = fchmod(fd, 0600) == 0;
-    size_t at = 0;
-    while (ok && at < text.size()) {
-        ssize_t n = write(fd, text.data() + at, text.size() - at);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) { ok = false; break; }
-        at += n;
-    }
-    if (ok) ok = fsync(fd) == 0;
-    if (close(fd) != 0) ok = false;
-    if (ok) ok = rename(tmp.c_str(), (std::string(LH_RUNTIME_DIR) + '/' + name).c_str()) == 0;
-    if (!ok) unlink(tmp.c_str());
-    return ok;
 }
 
 #if !defined(LH_HOST_TEST) || defined(LH_RUNNER_TEST)
@@ -252,7 +234,7 @@ bool apply_native_paths(const Config &c, std::string &error) {
     int lockfd = open(LH_RUNTIME_DIR "/paths.lock", O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (lockfd < 0 || flock(lockfd, LOCK_EX | LOCK_NB) < 0) {
         if (lockfd >= 0) close(lockfd);
-        error = "Another path operation is running"; return false;
+        error = "Path registration or inode keeper already active; reboot to change rules"; return false;
     }
     struct Guard { int fd; ~Guard() { close(fd); } } guard{lockfd};
     struct stat lockstat{};
@@ -261,13 +243,22 @@ bool apply_native_paths(const Config &c, std::string &error) {
         error = "Unsafe path-operation lock"; return false;
     }
     std::string log;
+    PathPins pins;
     size_t done_paths = 0, done_maps = 0;
     auto result = [&](const char *status, bool ok) {
         if (!ok && (done_paths || done_maps)) status = "partial";
         std::ostringstream state;
         state << "paths_status=" << status << "\npaths_count=" << done_paths << "\nmaps_count=" << done_maps << '\n';
         if (!error.empty()) log += "error=" + error + '\n';
-        if (!write_runtime("paths.log", log) || !write_runtime("paths.status", state.str())) {
+        if (done_paths || done_maps) {
+            state << "paths_lifetime_mode=inode_refs\n";
+            std::string keeper_error;
+            if (start_path_keeper(pins, lockfd, c, state.str(), log, keeper_error)) return ok;
+            error = keeper_error;
+            log += "keeper_error=" + error + '\n';
+            ok = false;
+        } else state << "paths_lifetime_mode=none\n";
+        if (!write_path_runtime("paths.log", log) || !write_path_runtime("paths.status", state.str())) {
             error = "Cannot save path operation status"; return false;
         }
         return ok;
@@ -306,18 +297,19 @@ bool apply_native_paths(const Config &c, std::string &error) {
     if (!plan.maps.empty() && !maps_enabled) {
         error = "Configured map paths require SUS_MAP"; return result("unsupported", false);
     }
+    // Retain every planned inode before any registration, including map-only
+    // files. The keeper inherits these exact references without a release gap.
+    if (!pins.acquire(plan, error)) return result("failed", false);
     for (const auto *list : {&plan.paths, &plan.maps}) {
         const bool map = list == &plan.maps;
         for (const auto &path : *list) {
             // Recheck immediately before calling ksud. Logical RO partitions
             // cannot be swapped by an ordinary app during the check/command.
-            if (!existing_ro_file(path, error)) {
-                if (error.empty()) error = "Path disappeared: " + path;
-                return result("failed", false);
-            }
+            if (!pins.matches(path, error)) return result("failed", false);
             if (!run_ksud({"susfs", map ? "add_sus_map" : "add_sus_path", path}, output, deadline, error))
                 return result("failed", false);
             if (map) ++done_maps; else ++done_paths;
+            if (!pins.matches(path, error)) return result("failed", false);
         }
     }
     return result("applied", true);

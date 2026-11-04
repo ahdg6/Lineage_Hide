@@ -111,6 +111,7 @@ jobs:
           unzip -l out/Lineage_Hide.zip | grep -q 'module.prop'
           unzip -l out/Lineage_Hide.zip | grep -q 'zygisk/arm64-v8a.so'
           unzip -l out/Lineage_Hide.zip | grep -q 'customize.sh'
+          unzip -l out/Lineage_Hide.zip | grep -q 'uninstall.sh'
           unzip -l out/Lineage_Hide.zip | grep -q 'webroot/index.html'
           unzip -l out/Lineage_Hide.zip | grep -q 'bin/configctl'
           unzip -p out/Lineage_Hide.zip module.prop | grep -q '^version='

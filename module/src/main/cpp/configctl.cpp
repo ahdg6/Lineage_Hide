@@ -1,5 +1,6 @@
 #include "config.h"
 #include "susfs_backend.h"
+#include "path_keeper.h"
 #include <iostream>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -26,9 +27,12 @@ int main(int argc, char **argv) {
         std::string legacy;
         if (!read_file(LH_RUNTIME_DIR "/legacy_boot", legacy, 128)) legacy = "not_started\n";
         std::cout << "legacy_boot=" << legacy;
-        std::string paths;
-        if (!read_file(LH_RUNTIME_DIR "/paths.status", paths, 4096)) paths = "paths_status=not_started\n";
-        std::cout << paths;
+        std::cout << native_path_status();
+        return 0;
+    }
+    if (command == "stop-paths" && argc == 2) {
+        if (!stop_path_keeper(error)) { std::cerr << error << '\n'; return 1; }
+        std::cout << "References released; existing kernel marks are not guaranteed cleared until reboot\n";
         return 0;
     }
     if ((command == "path-plan" && (argc == 2 || argc == 3)) ||
