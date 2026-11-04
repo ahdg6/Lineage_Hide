@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(LineageHide)
+option(LH_VERBOSE_LOGS "Log individual hook setup details" OFF)
 
 add_library(lineage_hide SHARED
+    config.cpp
+    config_transport.cpp
     entry.cpp
     service_filter.cpp
     service_cache.cpp
@@ -14,6 +17,9 @@ add_library(lineage_hide SHARED
 )
 
 target_include_directories(lineage_hide PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+if (LH_VERBOSE_LOGS)
+    target_compile_definitions(lineage_hide PRIVATE LH_VERBOSE_LOGS)
+endif()
 
 target_compile_options(lineage_hide PRIVATE
     -ffunction-sections
@@ -43,3 +49,19 @@ endif()
 set_target_properties(lineage_hide PROPERTIES
     OUTPUT_NAME "lineage_hide"
 )
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+target_compile_features(lineage_hide PRIVATE cxx_std_20)
+add_executable(configctl configctl.cpp config.cpp susfs_backend.cpp path_keeper.cpp)
+target_compile_options(configctl PRIVATE -Wall -Wextra -fvisibility=hidden)
+# NDK r27 defaults to 4 KiB. Set both LOAD alignment and RELRO padding so
+# the same extracted ELF files can load on 4 KiB and 16 KiB Android kernels.
+foreach(target lineage_hide configctl)
+    target_link_options(${target} PRIVATE
+        "-Wl,-z,max-page-size=16384" "-Wl,-z,common-page-size=16384")
+endforeach()
+if (CMAKE_STRIP)
+    add_custom_command(TARGET configctl POST_BUILD
+        COMMAND ${CMAKE_STRIP} --strip-unneeded $<TARGET_FILE:configctl>)
+endif()

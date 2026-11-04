@@ -1,324 +1,91 @@
-# Lineage Hide
+# Lineage Hide · Configurable
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+[English](README.md) | 简体中文
 
-Lineage Hide 是一个 Zygisk 模块，用于隐藏 LineageOS / 自定义 ROM 指纹。
-**全部三方应用生效**
+基于 [null07089/Lineage_Hide](https://github.com/null07089/Lineage_Hide) 的可配置 fork。提供 KernelSU WebUI、LineageOS / Evolution X 预设、应用黑白名单、自定义进程内规则及原生 SUSFS 路径后端。保留上游 GPL-3.0 许可证及作者署名。
 
-> **English**: Lineage Hide is a Zygisk module that hides LineageOS / custom ROM
-> fingerprints from third-party apps. The complete English documentation is in
-> [README.md](README.md).
+**当前版本：3.0.0-preview.6。** 修正原生后端只给当前 inode 打一次标记的设计：使用一个空闲进程持有 O_PATH 引用，并分别显示登记回执、引用维护状态和未验证的应用可见性。不定时补标、不增加内核补丁；代价是少量常驻进程及元数据内存。详见 [后端设计与限制](docs/SUSFS-BACKEND.md)、[运行开销](docs/PERFORMANCE.md) 和 [实机验证](docs/DEVICE-VALIDATION.md)。清单就绪或登记成功不代表目标应用已注入或文件此刻不可见。
 
-## 目录
+## 使用
 
-- [安装](#安装)
-- [兼容性](#兼容性)
-- [演示](#演示)
-- [与 SUSFS 搭配（重要）](#与-susfs-搭配重要)
-- [Zygisk Next 重要配置（否则部分应用会闪退）](#zygisk-next-重要配置否则部分应用会闪退)
-- [隐藏通道总览](#隐藏通道总览)
-- [注入范围（无配置）](#注入范围无配置)
-- [启动集成（service.sh）](#启动集成servicesh)
-- [内核侧路径隐藏](#内核侧路径隐藏)
-- [KernelSU SELinux 状态加固](#kernelsu-selinux-状态加固)
-- [构建与发布](#构建与发布)
-- [分阶段验证](#分阶段验证)
-- [设计约束与经验](#设计约束与经验)
-- [目录结构](#目录结构)
-- [许可证](#许可证)
+1. 在 KernelSU / 兼容管理器安装构建出的 `Lineage_Hide.zip`，启用兼容的 Zygisk 实现并重启。不要同时启用其他 Lineage Hide 衍生模块。
+2. 打开模块 WebUI。首次安装检测到 `ro.evolution.version` / `ro.evolution.build.version` 或 Evolution/EvoX 构建标识时使用 EvoX 预设，否则使用 LineageOS。已有配置跨升级保留，不重新探测或覆盖。
+3. 选择预设、应用范围与隐藏通道，按“保存配置”。载入预设只更新规则，保留应用名单、范围、总开关和全局兼容开关。
+4. 强行停止并重新打开目标应用，让其所有进程读取新配置。更新模块二进制本身必须重启设备。
 
-## 安装
+UI 使用 [KernelSU WebUI 接口](https://kernelsu.org/guide/module-webui.html)，所有资源随 ZIP 打包，无 CDN、远程脚本或运行时 npm 依赖。普通浏览器只会提示缺少管理器接口，不能实际保存配置。
 
-1. 在 Magisk / KernelSU 管理器中刷入 `Lineage_Hide.zip` 并重启设备；
-2. 需要可用的 Zygisk 实现（KernelSU 上为 Zygisk Next），并按下文
-   「Zygisk Next 重要配置」设置三项开关；
-3. 完整隐藏还需要内核侧 SUSFS 与可选的内核补丁，见下文；
-4. 更新模块后必须重启；版本变更见 [changelog.md](changelog.md)。
+## 应用范围
 
-## 兼容性
+| 模式 | 生效范围 | 空名单 |
+| --- | --- | --- |
+| 全部三方应用 | 所有符合条件的三方应用 | 名单不参与判断 |
+| 仅名单内应用（白名单） | 名单中包名精确匹配的三方应用 | 不注入任何应用 |
+| 排除名单内应用（黑名单） | 三方应用中排除名单内包名 | 覆盖全部三方应用 |
 
-- 理论上支持 LineageOS 23.2 及以上版本；
-- 测试通过：OnePlus 8T，LineageOS 24（Android 17）；
-- 安装模块后如果暴露 `/system/bin/service` 或 `/system/bin/pm` 挂载点，需要
-  安装元模块（MetaModule）：
-  <https://kernelsu.org/guide/metamodule.html>；
-- 一加欧版机型请安装官方“软件商店”，否则部分应用的特征检查会命中：
-  <https://www.oppomobile.com/m/store.html>；
-- **部分软件无法打开**：请改用这个 Zygisk Next 版本
-  <https://t.me/c/2022002916/124739>
-  （新版 Zygisk 注入实现在 360 加壳应用上存在自旋问题），并按
-  「Zygisk Next 重要配置」设置管理器；
+包名通过 Zygisk 提供的 `app_data_dir` 确定，不依赖可自定义的进程名称，因此通常的 `:remote` 子进程共用包规则。规则按包匹配，适用于不同 Android 用户中的同一包；选择器只展示当前用户的已安装三方包，其他包可手动填写。
 
-## 演示
+仅普通应用 appId `10000..19999` 可注入。系统应用、核心组件、隔离 UID、SDK 沙箱、无法确定包归属的进程始终跳过；白名单不能覆盖这些保护。启动脚本生成 `/dev/lineage_hide/system_packages.txt`，没有有效清单时跳过注入。模块启动清单在每次重启后刷新。
 
-本项目隐藏效果演示视频：<https://b23.tv/437BHCi>
+## 可配置通道
 
-<p align="center">
-  <img src="images/native-detector.png" width="280" alt="Native Detector：环境正常，未检测到修改">
-  <img src="images/duck-detector.png" width="280" alt="Duck Detector：无高危项">
-</p>
-<p align="center">
-  <img src="images/play-integrity.png" width="280" alt="Play Integrity：BASIC、DEVICE、STRONG 全部通过">
-  <img src="images/system-update.png" width="280" alt="系统更新：LineageOS 24 更新界面在系统应用中正常显示">
-</p>
-
-抖音登录成功示例（OnePlus 8T）：
-
-<p align="center">
-  <img src="images/douyin-login.jpg" width="280" alt="抖音：登录成功，进入欢迎页">
-  <img src="images/douyin-device-management.png" width="280" alt="抖音：登录设备管理显示 OnePlus 8T 本机">
-</p>
-
-## 与 SUSFS 搭配（重要）
-
-模块只能改变“目标进程内能看到什么”。内核对外报告的内容——路径可见性、已经打开
-的 fd、系统属性——依赖 KernelSU 内核上的 SUSFS，本项目内置配套胶水：
-
-- `service.sh` 每次开机调用系统提供的 `ksu_susfs`：
-  - 开启 `hide_sus_mnts_for_non_su_procs` 与 `enable_avc_log_spoofing`；
-  - 把带 ROM 关键词的文件注册为 `add_sus_path`，使目录列表与路径查询对应用不可见；
-  - 把文件映射与 idmap 注册为 `add_sus_map`，使其从应用 `/proc/self/maps` 中消失；
-  - 用 `resetprop` 删除或清洗含 `lineage` 的系统属性；
-  - 隐藏模块自身的 `zygisk/arm64-v8a.so` 与 Zygisk 库；
-- 从 zygote 继承的 fd 的 readlink 目标（`/proc/<pid>/fd/*`）需要
-  `scripts/patch-kernel.sh` 打的内核补丁；SUSFS 单独不会改写它。
-
-没有 SUSFS 时，模块仍能隐藏下面五类进程内信号，但 native 文件/属性扫描仍可能
-识别出 ROM。
-
-## Zygisk Next 重要配置（否则部分应用会闪退）
-
-<p align="center">
-  <img src="images/zygisk-next-settings.png" width="320" alt="Zygisk Next 设置：Denylist Policy 为 Unmount Only、Use anonymous memory 关闭、Use Zygisk Next linker 开启">
-</p>
-
-Zygisk Next 管理器里请按上图设置，否则部分应用（尤其是 360 加壳应用）会在启动时闪退：
-
-- **Denylist Policy** 选 `Unmount Only`，不要用 `Enforce DenyList`；
-- **Use anonymous memory** 关闭；
-- **Use Zygisk Next linker** 开启。
-
-模块通过 `FORCE_DENYLIST_UNMOUNT` 在应用进程内卸载挂载点，这三项设置需要与之配合。
-Zygisk Next 版本选择见上方“兼容性”一节。
-
-## 隐藏通道总览
-
-| 通道 | 机制 |
+| 通道 | 可编辑内容 |
 | --- | --- |
-| ServiceManager 服务 | `BinderProxy.transactNative` JNI hook；枚举/调试回复在 Parcel 层过滤；应用发起的直接 lookup 在私有请求副本中等长改写。关键词：`lineage`、`crdroid`、`aospa`、`pixelexperience`、`omnirom`、`protonaosp`，精确匹配 `profile` |
-| 资源包 | AssetManager 名称/ID 查询把 `lineageos.platform`（资源包 id `0x3f`）按不存在处理 |
-| 系统 feature | 改写 `hasSystemFeature` 请求；`Parcel` 读取侧把 8 个 `org.lineageos.*` 名称替换为等长占位串 |
-| 受保护广播 | 复制外发 `IActivityManager` 广播请求并等长替换 10 个 lineage Action |
-| 反射常量 | `AssetManager.LINEAGE_APK_PATH` 从 `getDeclaredField`/`getField`/`getDeclaredFields` 系列中移除（仅对 `AssetManager` 生效） |
+| 系统服务 | 不区分大小写的子串关键词及完整服务名 |
+| 系统特性 | 区分大小写的完整 feature 名称 |
+| 受保护广播 | 区分大小写的完整 action 名称 |
+| 资源包 | 完整包名与两位小写十六进制 package ID |
+| 反射 | 开关固定的 `AssetManager.LINEAGE_APK_PATH` 过滤 |
+| 模块挂载 | 是否请求 Zygisk `FORCE_DENYLIST_UNMOUNT` |
 
-所有进程内通道都**常开**、只作用于被注入的应用进程、保持长度不变，且不写 Binder
-回复缓冲区。
+LineageOS 预设包含上游 Lineage 服务、SDK 特性、广播、资源和反射规则。EvoX 以相同 SDK 规则为基础，增加 `evolution` / `evox` 服务关键词；这些是可编辑起点，不表示每个 ROM 版本都存在对应服务，也不代表覆盖了所有 EvoX 特征。原版其他 ROM 关键词可在自定义规则中自行添加。
 
-## 注入范围（无配置）
+服务列表过滤先让 Parcel 复制 Binder reply 到自有缓冲区，再修改匹配项；feature 读取只替换返回字符串，不写 reply 字节。广播只处理 Intent.action，不改 extras。不关闭资源系统持有的 fd。原生路径与映射使用下方独立的 SUSFS 后端；其他原生扫描与硬件证明不由进程内 hooks 解决。应用名单不会改变 SUSFS、内核补丁或其他模块的作用范围。
 
-模块在满足以下条件时注入一个进程：
+## 原生 SUSFS 路径
 
-1. uid 属于应用范围（`>= 10000`）；
-2. 其包名不在系统包清单中。
+两套预设同时带可编辑路径关键词、显式隐藏文件与映射路径。`native_paths` 默认开启，总开关关闭时不执行；保存后在下次启动应用，WebUI 的“只读预览”不会保存或注册路径。切换预设保留用户的路径开关选择。引用维护进程存活期间，普通缓存回收不能回收其持有的 inode；不保证抵抗进程终止、文件替换或挂载变化。删除、关闭或修改规则后需重启应用新规则并清除旧标记。
 
-`service.sh` 每次开机会用 `pm list packages -s` 生成系统包清单
-（`/data/adb/modules/lineage_hide/system_packages.txt`），因此**只有三方应用**
-会被注入；清单生成前（刚安装后的首次开机）有一段硬编码回退保护，覆盖
-SystemUI、Settings、权限控制器、核心 providers、核心服务与 `org.lineageos.*`
-应用。`FORCE_DENYLIST_UNMOUNT` 始终开启。
+当前后端仅支持 `/data/adb/ksud susfs` 提供的 **SUSFS 2.3.0** 接口及所需功能。没有该接口时报告不支持，进程内规则仍可使用，不会回退执行旧版全局脚本。路径处理不调用 `ksud susfs config`，不改写原生管理器的持久 JSON。
 
-如需放过某个三方应用，把它的包名临时加进 `system_packages.txt` 即可（下次开机会
-被重新生成覆盖）。
+只扫描 `/system`、`/system_ext`、`/product`、`/vendor`、`/odm` 的普通文件，不跟随符号链接。关键词仅匹配文件名；显式路径逐段校验，拒绝越界、目录、通配符和 Shell 字符。预设沿用 Lineage 路径，包括 `libstagefright.so`；请先预览实际匹配项。映射列表独立配置，关键词扫描不自动添加映射规则。EvoX 预设另含 `/product/overlay/Pixelframework-res.apk` 的**仅映射规则**，保留资源加载。升级保留已有配置；需要此规则时可在映射列表中手动添加该路径，或重新载入并检查 EvoX 预设后保存。其他构建不存在此文件时跳过。
 
-## 启动集成（service.sh）
+**应用黑白名单不控制这些内核标记。** 实际可见性由内核和管理器的卸载策略决定；界面分别显示最近登记结果、当前引用维护状态和未验证的实际隐藏效果。登记数量不是当前隐藏数量；维护进程丢失会明确报告，需重启恢复。日志为 `/dev/lineage_hide/paths.log`。后端已在 Android 16/EvoX 上完成有限实测，范围与限制见 [SUSFS-BACKEND.md](docs/SUSFS-BACKEND.md)。
 
-开机动画启动后，模块会：
+## 全局兼容开关
 
-1. 隐藏 `pm` 命令探测：wrapper 写到 `/data/system/pm`，再用
-   `nsenter -m -t 1` 在 init mount namespace 里 bind mount 到
-   `/system/bin/pm`；wrapper 把调用转给 `cmd package`，对应用
-   进程（uid ≥ 10000）的输出做等长 `lineage` → `lineagx`、
-   `Lineage` → `Lineagx` 改写；
-2. 隐藏 service 列表：
-   - OnePlus 8T（`ro.product.model=KB2000`）把 `/` 重挂为可写，备份
-     `/system/bin/service` 为 `service_`，写入一个对 `service list` 返回
-     392 项定制静态列表的 wrapper；
-   - 其余机型（或 8T 写入失败时）不改系统分区：把原文件备份到
-     `/data/system/service_`，wrapper 写到 `/data/system/service`，再用
-     `nsenter -m -t 1` 在 init mount namespace 里 bind mount 到
-     `/system/bin/service`；
-   - 8T wrapper 对非 `list` 调用、通用 wrapper 对所有输出做等长
-     `lineage` → `lineagx` 改写；
-3. 把 `/system`、`/product/etc`、`/system_ext/etc`、
-   `/system/system_dlkm/etc` 的 `build.prop` 中 `userdebug` 改写为 `user`，
-   不再暴露调试构建信息；
-4. 伪装 bootloader / verified boot 状态：`ro.boot.flash.locked=1`、
-   `ro.boot.verifiedbootstate=green`、`ro.boot.vbmeta.device_state=locked`、
-   `ro.boot.vbmeta.*`，以及 `ro.debuggable=0`、`ro.force.debuggable=0`、
-   `ro.secure=1`、`ro.adb.secure=1`、`ro.build.type=user`、
-   `ro.build.tags=release-keys`、recovery 状态的 `ro.bootmode` 与
-   `init.svc.adb_root`，并把 `ro.config.ringtone` 改写为 `unknown`；
-5. 删除名称含 `lineage` 的系统属性，改写值中含 `lineage` 的属性；
-6. 禁用 `org.lineageos.jelly`，生成系统包清单（供注入范围判断使用）；
-7. 开启 SUSFS 的 `hide_sus_mnts_for_non_su_procs` 与
-   `enable_avc_log_spoofing`，然后遍历 `/data/resource-cache`、`/system`、
-   `/vendor`、`/system_ext`、`/product` 中带 `*lineage*` 和 `*gapps*`
-   的条目，交给 `ksu_susfs add_sus_path`（普通文件同时 `add_sus_map`）；
-8. 追加注册：`addon.d`、LineageOS 更新目录、SELinux 策略文件、平台资源包的
-   RRO 与 idmap、模块自身 native 库与 Zygisk 库。
+基于原版整理的 systemless 兼容脚本位于 `module/scripts/legacy-service.sh`，**默认关闭**，只有总开关和 `legacy_boot` 同时开启时才在下次启动执行。规则仍为原版固定 Lineage 规则，不读取自定义服务/特性规则，也不跟随 EvoX 预设变更。
 
-SUSFS 以内核模块（LKM）方式提供时，path/map 注册改用 `/proc/susfs_path`
-与 `/proc/susfs_map`。
+此脚本只全局改写运行时属性，并 bind mount `pm` / `service` 包装器；已删除上游的系统分区写入、`build.prop` 编辑、Jelly 停用和重复 SUSFS 注册。关闭后重启清除本次挂载与属性处理。它不受应用黑白名单控制，也不应被理解为按应用的属性伪装。若过去安装过原版，其已有磁盘修改或应用停用状态仍需单独恢复。
 
-`pm` 与 service 的 wrapper 只对应用进程（uid ≥ 10000）去特征，root/shell 仍得到
-原始输出。service 列表步骤只有 OnePlus 8T 会重挂并写入系统分区；通用 bind mount
-分支不修改系统分区。第 3 步会重挂对应分区并在完成后挂回只读，无法重挂时文件改写
-不生效，但第 4 步的属性伪装仍能覆盖应用运行时读到的值。所有步骤都是幂等的，
-重启重复执行没有副作用。与进程内钩子不同，属性改写和 SUSFS 注册是全局生效的。
+保留兼容脚本不等于验证了它在当前设备上的可用性。初次试用建议保持关闭，先验证进程内处理。Zygisk 的 denylist 策略应允许模块被加载；如果管理器在注入前已排除目标应用，本模块名单不能绕过管理器决定。
 
-## 内核侧路径隐藏
+## 配置持久化
 
-`scripts/patch-kernel.sh` 会把 procfs 侧的补丁打到任意内核源码树：对应用进程
-（uid ≥ 10000），`/proc/<pid>/fd/*`、`map_files/*`、`maps`、`smaps`、
-`numa_maps` 输出的路径字符串不再包含 ROM 关键词。脚本按函数语义定位（不依赖
-行号）、幂等，兼容带 vendor/SUSFS 改动的树：
+配置在 `/data/adb/lineage_hide/config.conf`，目录 `0700`、文件 `0600`，更新 ZIP 不携带或覆盖用户配置。通过 Zygisk root companion 读取，应用进程不会直接读取 `/data/adb`。格式有版本号、数量及长度限制，写入前由 native 校验，临时文件同步后原子替换；不会作为 Shell 脚本执行。
 
-```bash
-scripts/patch-kernel.sh /path/to/kernel          # 应用
-scripts/patch-kernel.sh --check /path/to/kernel  # 仅报告状态
-scripts/patch-kernel.sh --revert /path/to/kernel # 撤销
+WebUI 导入后先显示草稿，保存才落盘。导出的是当前已校验的草稿，界面提供配置文本复制及下载；部分管理器不支持 Blob 下载时可使用复制按钮，也可用 Root 文件管理器复制上述已保存文件。卸载保留此目录，彻底清除设置时手动备份并删除。损坏配置不会自动恢复为“全应用”模式；WebUI 会显示错误并提供可检查后保存的默认草稿。协议及 CLI 见 [配置说明](docs/CONFIGURATION.md)。
+
+## 构建和测试
+
+Linux x86_64，NDK r27c / `27.2.12479018`，CMake、Ninja、zip、unzip、readelf：
+
+```sh
+bash scripts/build-native.sh /absolute/path/to/android-ndk-r27c
+# 输出 out/Lineage_Hide.zip
 ```
 
-脚本写入 `include/linux/lineage_hide.h`，修改 `fs/proc/base.c` 的
-`do_proc_readlink()` 与 `fs/seq_file.c` 的 `seq_file_path()`，修改过的文件备份
-为 `*.lineage_hide.bak`。应用后需重新编译并刷入内核；补丁只改显示字符串，不影响
-文件访问与资源加载。
+直接 native 构建不需要 JDK、Gradle 或完整 SDK。保留 Gradle 工程作为可选入口；若使用 Gradle，需将同时含 `liblineage_hide.so` 和 `configctl` 的构建目录传给 `scripts/package.sh`。仅打包 arm64，最低链接 API 26 不等同所有 Android 版本都已验证。
 
-## KernelSU SELinux 状态加固
-
-`scripts/selinux_hide_patch.sh` 加固 KernelSU 的 `selinux_hide` 特性：该特性
-代替当前（被 KernelSU 修改过的）策略，用开机时留存的策略副本来回答应用的
-selinuxfs 查询。在特性开启的前提下，脚本在 `kernel/feature/selinux_hide.c`
-中加三处守卫，使这些回退路径对应用进程（uid ≥ 10000）直接返回 `-EINVAL`，
-不再验证以下特权上下文：
-
-- `my_write_context()`（`/sys/fs/selinux/context`）拒绝 `u:r:adbroot:s0`；
-- `my_write_access()`（`/sys/fs/selinux/access`）拒绝 `u:r:shell:s0` +
-  `u:r:su:s0`、`u:r:fsck_untrusted:s0`、`u:r:adbroot:s0`；
-- `ksu_handle_selinux_setprocattr()` 拒绝 `u:r:adbroot:s0`。
-
-环境检测应用常借这三类探针确认净化后的策略背后是否藏着 `su`、`adbroot` 等
-特权域；拒绝后无论内核实际运行哪份策略，探针都无法得到肯定结果。root/shell
-进程（uid < 10000）不受影响。
-
-与 `patch-kernel.sh` 相同，脚本按函数语义定位（不依赖行号）且幂等：
-
-```bash
-scripts/selinux_hide_patch.sh /path/to/kernel          # 应用
-scripts/selinux_hide_patch.sh --check /path/to/kernel  # 仅报告状态
-scripts/selinux_hide_patch.sh --revert /path/to/kernel # 撤销
+```sh
+export JNI_HEADER=/absolute/path/to/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/jni.h
+python3 -m unittest discover -s tests -v
+npm ci
+npx playwright install chromium
+npm test
+# 已有 Chromium 可使用 CHROMIUM_PATH=/path/to/chromium npm test
 ```
 
-`<tree>` 为内核源码根目录（KernelSU 克隆在 `KernelSU/` 并软链为
-`drivers/kernelsu`）或 KernelSU 仓库根目录。修改后的
-`kernel/feature/selinux_hide.c` 备份为 `*.selinux_hide.bak`；应用后需重新编译
-并刷入内核。
+测试覆盖解析边界、原子保存、升级保留、多用户 appId、黑白名单、系统保护、配置损坏、companion 帧、过滤规则、路径计划、越界/链接拒绝及 UI 保存/导入/导出/错误处理。C++ 测试启用 ASan / UBSan。新增 JNI/Parcel 模拟层执行实际 hook 代码，覆盖回复缓冲区归属、内存分配失败、跨接口事务号冲突、广播编码与附加数据、反射范围及资源 hook 部分安装；命令执行器测试覆盖输出限制、超时和子进程清理，启动脚本测试隔离所有设备路径。模拟层不代替真实 Binder / ART。浏览器联调执行主机版配置工具，模拟 KernelSU 桥及应用清单；不替代 Android 端验收。实机检查项见 [DEVICE-VALIDATION.md](docs/DEVICE-VALIDATION.md)。
 
-## 构建与发布
-
-安装 Gradle 8.11.1、JDK 17 与 Android SDK/NDK；仓库内的 `gradlew` 使用 `PATH`
-上的 Gradle。
-
-```bash
-./gradlew :module:assembleRelease
-bash scripts/package.sh
-```
-
-`v*` 标签由 GitHub Actions 构建，发布 `Lineage_Hide.zip` 并把根目录
-`update.json` 同步到 `main`，因此 Magisk/KernelSU 管理器可以从 Release 检查更新。
-
-## 分阶段验证
-
-1. **模块加载**：三方应用启动后 `logcat -s LineageHide` 应出现
-   `enabled uid=<uid> process=<进程名>`；系统应用（Settings、SystemUI、
-   `org.lineageos.*`）不应出现该行；
-2. **ServiceManager**：三方应用内枚举服务列表不应出现关键词服务；
-   Settings 等系统应用仍能看到；
-3. **资源包**：三方应用内
-   `getIdentifier("config_enableLiveDisplay", "bool", "lineageos.platform")`
-   返回 `0`；系统应用仍返回真实 ID；
-4. **feature**：三方应用内
-   `hasSystemFeature("org.lineageos.livedisplay")` 为 `false`，
-   `getSystemAvailableFeatures()` 无真实 `org.lineageos.*` 名称；
-5. **广播**：三方应用发送
-   `lineageos.intent.action.REFRESH_PREFERENCE` 不抛异常，日志出现
-   `scrubbed N lineage broadcast action(s)`；
-6. **反射常量**：三方应用内
-   `AssetManager.class.getDeclaredField("LINEAGE_APK_PATH")` 抛
-   `NoSuchFieldException`；系统应用仍可见；
-7. **SUSFS 注册**：`ksu_susfs` 的注册结果可在管理器/SUSFS 状态中查看；
-   应用 `/proc/self/maps` 不应出现模块 `.so` 与 lineage 路径；
-8. **内核补丁**：应用 `/proc/self/fd/*` 的 readlink 目标含关键词时显示为
-   等长改写（如 `lineagx`）；root 进程不受影响；
-9. **服务列表**：OnePlus 8T 上 `service list` 返回 392 项静态列表；其他机型
-   不应出现含 `lineage` 的服务名；root/shell 仍为原始输出；
-10. **pm 命令**：应用内 `pm list packages` 输出不含 `lineage`（显示为
-    `lineagx`）；root/shell 中仍为原始输出；
-11. **Bootloader 属性**：`getprop ro.boot.flash.locked` 为 `1`，
-    `ro.boot.verifiedbootstate` 为 `green`，`ro.boot.vbmeta.device_state`
-    为 `locked`，`ro.build.type` 为 `user`，`ro.debuggable` 为 `0`，
-    `ro.config.ringtone` 为 `unknown`；
-12. **KSU 特权探针**：开启 `selinux_hide` 后，应用内经
-    `/sys/fs/selinux/context`、`/sys/fs/selinux/access` 或 setprocattr 探测
-    `u:r:adbroot:s0`、`u:r:shell:s0`→`u:r:su:s0` 均返回 `EINVAL`；
-    root/shell 进程不受影响；
-13. **抖音**：抖音可正常启动并通过环境检测（见上方演示截图）。
-
-## 设计约束与经验
-
-- **不要写 Binder 回复 Parcel。** 回复可能是指向 binder 缓冲区的 data-reference；
-  早期实现在回复里原地改写导致多应用 `Parcel::writeInt32` SIGSEGV。现在 feature
-  枚举在读取侧替换，广播/服务改写私有请求副本；
-- **不要 close 资源系统持有的 fd。** 从 zygote 继承的 overlay/platform-res fd 归
-  `ZipArchive` 所有，外部 `close()` 触发 fdsan 直接 SIGABRT；这类 fd 的路径暴露
-  由内核补丁负责；
-- **更新模块必须重启。** zygote 常驻映射模块 `.so`，热替换正在映射的文件会让
-  新旧页混用并导致 zygote 崩溃；
-- **native 边界。** 进程内钩子只覆盖 Java/框架路径；native 直读 libc 的扫描、纯
-  native Binder 调用、`PendingIntent` 代发广播不在覆盖内，需要 SUSFS 与内核补丁
-  补齐；
-- **隐藏本身要尽量小。** 每多一个钩子就多一份可观测面；已移除对 native 无效的
-  list0/readlink 钩子，只保留确有作用的通道；
-- **OnePlus 8T 服务列表是静态快照。** ROM 更新改变服务集合后，需要重新生成
-  wrapper 才能同步。
-
-## 目录结构
-
-```
-module/                      Magisk/KernelSU 模块
-  module.prop                模块标识（id=lineage_hide）
-  service.sh                 开机：pm/service 去特征 + bootloader 属性伪装 + 系统包清单 + ksu_susfs 注册
-  customize.sh               安装脚本（权限）
-  src/main/cpp/              Zygisk native 代码
-    entry.cpp                注入判定（uid + 系统包清单）与 specialization 入口
-    binder_hook.{h,cpp}      ServiceManager BinderProxy JNI 钩子与过滤
-    service_filter.{h,cpp}   服务名匹配
-    service_cache.{h,cpp}    sCache 清理
-    resource_hook.{h,cpp}    资源包隐藏
-    feature_filter.{h,cpp}   系统 feature
-    broadcast_filter.{h,cpp} 受保护广播
-    reflection_filter.{h,cpp} LINEAGE_APK_PATH 反射
-    log.{h,cpp}              日志
-scripts/
-  package.sh                 打包 Lineage_Hide.zip
-  patch-kernel.sh            内核 procfs 路径清洗补丁
-  selinux_hide_patch.sh      KernelSU selinux_hide 特权上下文探针防护
-  verify_stealth.sh          ELF 符号与 /proc maps 辅助验证（开发用）
-images/                      README 截图（演示、配置）
-```
-
-## 许可证
-
-Copyright (C) 2026 GitHub@null07089。
-
-本项目以 GNU General Public License v3.0 发布，详见 [LICENSE](LICENSE)。
+预览构建不含自动更新地址，避免意外更新回上游无配置版本。tag 发布构建使用当前 fork 的更新地址；不使用上游 Release manifest。

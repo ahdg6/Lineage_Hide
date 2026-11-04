@@ -1,338 +1,88 @@
-# Lineage Hide
+# Lineage Hide · Configurable
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+English | [简体中文](README.zh-CN.md)
 
-Lineage Hide is a Zygisk module that removes LineageOS and other custom-ROM
-fingerprints from applications.  Every third-party app is covered.
+A configurable fork of [null07089/Lineage_Hide](https://github.com/null07089/Lineage_Hide), adding an offline KernelSU WebUI, editable LineageOS / Evolution X presets, per-package scope, channel controls and a native SUSFS path backend. GPL-3.0; upstream attribution is retained.
 
-> **中文简介**：Lineage Hide 是一个用于隐藏 LineageOS / 自定义 ROM 指纹的
-> Zygisk 模块，对全部三方应用生效。完整中文文档见
-> [README.zh-CN.md](README.zh-CN.md)。
+**3.0.0-preview.6:** fixes the native backend's one-shot inode lifetime design by retaining O_PATH references in one idle process. Registration receipts, live reference health and unverified application visibility are reported separately. There is no periodic re-marking or kernel patch. See [backend design and limits](docs/SUSFS-BACKEND.md), [runtime costs](docs/PERFORMANCE.md) and [device validation](docs/DEVICE-VALIDATION.md). A ready package snapshot or registration count does not prove active hooks or hidden files in a target app.
 
-## Contents
+## Use
 
-- [Installation](#installation)
-- [Compatibility](#compatibility)
-- [Demo](#demo)
-- [Pairing with SUSFS (important)](#pairing-with-susfs-important)
-- [Important Zygisk Next settings (otherwise some apps crash)](#important-zygisk-next-settings-otherwise-some-apps-crash)
-- [Hidden channels](#hidden-channels)
-- [Injection scope](#injection-scope)
-- [Boot integration (`service.sh`)](#boot-integration-servicesh)
-- [Kernel-side path hiding](#kernel-side-path-hiding)
-- [KernelSU selinux_hide hardening](#kernelsu-selinux_hide-hardening)
-- [Build](#build)
-- [Verification](#verification)
-- [Design notes](#design-notes)
-- [Directory structure](#directory-structure)
-- [License](#license)
+1. Install the built `Lineage_Hide.zip` in KernelSU or a compatible manager, enable a compatible Zygisk implementation, and reboot. Disable other Lineage Hide variants before testing this one.
+2. Open the module WebUI. On first install, an Evolution version property/build identifier selects EvoX; otherwise the default is LineageOS. Existing configuration survives updates without being reset.
+3. Choose a preset, package scope and channels, then save. Loading a preset changes rules while retaining the package list, scope, master switch and global compatibility setting.
+4. Force-stop and reopen affected applications. Existing processes keep their startup configuration. Updating the module binary requires a device reboot.
 
-## Installation
+The UI uses the [KernelSU WebUI contract](https://kernelsu.org/guide/module-webui.html). All assets are bundled; no CDN, remote scripts or runtime npm dependencies. A normal browser displays a missing-manager error and cannot save settings.
 
-1. Flash `Lineage_Hide.zip` in Magisk or KernelSU and reboot;
-2. A Zygisk implementation is required (Zygisk Next on KernelSU); apply the
-   three settings in "Important Zygisk Next settings" below;
-3. Full hiding also needs SUSFS on the kernel and, optionally, the kernel
-   patch, both described below;
-4. Updates require a reboot; see [changelog.md](changelog.md) for changes.
+## Scope and rules
 
-## Compatibility
+| Mode | Targets | Empty list |
+| --- | --- | --- |
+| All | All eligible third-party packages | List is ignored |
+| Include / allowlist | Only listed third-party packages | No injection |
+| Exclude / denylist | All eligible packages except listed packages | All eligible packages |
 
-- Theoretically supports LineageOS 23.2 and newer;
-- Tested on OnePlus 8T with LineageOS 24 (Android 17);
-- If the `/system/bin/service` or `/system/bin/pm` mount point is still
-  exposed after installing the module, install the MetaModule:
-  <https://kernelsu.org/guide/metamodule.html>;
-- On OnePlus EU models, install the official App Market or some apps' feature
-  checks will be triggered:
-  <https://www.oppomobile.com/m/store.html>;
-- **If some applications fail to open**, switch to this Zygisk Next build:
-  <https://t.me/c/2022002916/124739> — the newer Zygisk injection
-  implementation has a spin issue when injecting 360-hardened apps; also apply
-  "Important Zygisk Next settings" below.
+Packages are derived from Zygisk's `app_data_dir`, not customizable process names. Ordinary subprocesses share their owning package's rule. Rules apply to the same package across Android users; the picker lists installed third-party packages for the current user, with manual entry available for others.
 
-## Demo
+Only appIds `10000..19999` are eligible. System packages, protected core components, isolated processes, SDK sandboxes and processes without a valid owning package are always skipped. The include list cannot override these protections. A fresh system-package snapshot is generated each boot in `/dev/lineage_hide`; injection is skipped until that snapshot and the configuration are valid.
 
-Demo video of the hiding effect of this project: <https://b23.tv/437BHCi>
+Editable channels:
 
-<p align="center">
-  <img src="images/native-detector.png" width="280" alt="Native Detector — environment normal, no modifications detected">
-  <img src="images/duck-detector.png" width="280" alt="Duck Detector — no urgent findings">
-</p>
-<p align="center">
-  <img src="images/play-integrity.png" width="280" alt="Play Integrity — BASIC, DEVICE and STRONG all pass">
-  <img src="images/system-update.png" width="280" alt="System update — the LineageOS 24 update screen stays visible in the system app">
-</p>
+- Case-insensitive service substrings and exact service names.
+- Case-sensitive exact feature names and protected broadcast actions.
+- Resource package names and two-digit lowercase hexadecimal IDs.
+- A toggle for the fixed `AssetManager.LINEAGE_APK_PATH` reflection filter.
+- A toggle for Zygisk's `FORCE_DENYLIST_UNMOUNT` request.
 
-Douyin login succeeds on a OnePlus 8T:
+The LineageOS preset contains the upstream Lineage SDK rules. EvoX inherits these rules and adds `evolution` / `evox` service substrings. These are editable starting rules, not evidence that all ROM versions expose those services or that every EvoX signal is covered. Other upstream ROM keywords can be added manually.
 
-<p align="center">
-  <img src="images/douyin-login.jpg" width="280" alt="Douyin — login succeeds and the welcome page appears">
-  <img src="images/douyin-device-management.png" width="280" alt="Douyin — login device management lists this OnePlus 8T">
-</p>
+Process-local Binder/JNI hooks copy matched service replies into Parcel-owned storage before editing them; feature reads substitute returned strings without writing reply bytes. Resource-owned descriptors are never closed. Broadcast filtering targets only Intent.action and leaves extras unchanged. Native paths/maps use the separate SUSFS adapter below; other native scanning and hardware attestation remain outside the process hooks' scope. The package list does not control SUSFS, kernel patches or other modules.
 
-## Pairing with SUSFS (important)
+## Native SUSFS paths
 
-The module only changes what a target *process* can observe.  What the kernel
-reports — path visibility, already-open file descriptors, system properties —
-is covered by SUSFS on a KernelSU kernel, and Lineage Hide ships the glue for
-it:
+Both presets include editable filename keywords, explicit hidden files and mapping paths. `native_paths` defaults on; the master switch also gates execution. Saved rules apply next boot. Read-only preview evaluates the current draft without saving or marking paths. Preset changes preserve the user's path switch. Removing/disabling rules requires a reboot to clear previous inode marks.
 
-- `service.sh` runs on every boot and uses the system-provided `ksu_susfs` command
-  to enable `hide_sus_mnts_for_non_su_procs` and `enable_avc_log_spoofing`,
-  register ROM-named files with `add_sus_path`, their mappings and idmaps with
-  `add_sus_map`, and to delete or scrub lineage system properties with
-  `resetprop`;
-- it also hides the module's own `zygisk/arm64-v8a.so` and the Zygisk library
-  from application `/proc/self/maps`;
-- `/proc/<pid>/fd/*` readlink targets inherited from zygote need the kernel
-  patch from `scripts/patch-kernel.sh`; SUSFS alone does not rewrite them.
+The adapter currently requires `/data/adb/ksud susfs`, **SUSFS 2.3.0** and the relevant enabled kernel features. Unsupported devices report that state while retaining process-local filtering; no legacy-script fallback is executed. The adapter never calls `ksud susfs config` or changes the manager's persistent JSON.
 
-Without SUSFS the module still hides the five in-process channels below, but
-native file and property scanners can still fingerprint the ROM.
+Only regular files under `/system`, `/system_ext`, `/product`, `/vendor`, `/odm` are eligible. Symlinks are not followed. Keywords match basenames, with explicit path validation rejecting traversal, directories, wildcards and shell syntax. Defaults include inherited Lineage paths such as `libstagefright.so`; review the preview before use. Maps are configured independently; scanned paths do not automatically become map rules. The EvoX preset also includes `/product/overlay/Pixelframework-res.apk` as a **map-only** rule, preserving resource loading. Existing configurations are retained on update: add this path under mapping rules, or load/review the updated EvoX preset and save. Missing files on other builds are skipped.
 
-## Important Zygisk Next settings (otherwise some apps crash)
+**Application allow/deny lists do not scope kernel marks.** Visibility depends on kernel/manager unmount policy. Status separates the latest registration outcome from live reference retention and actual visibility, which the helper leaves unverified. References protect the same mounted inodes from ordinary cache eviction while the keeper lives; a killed keeper or replaced mount/file is outside that guarantee. Reboot to apply changed rules or clear old marks. Logs are in `/dev/lineage_hide/paths.log`. The adapter has a limited Android 16/EvoX device check; see [backend details](docs/SUSFS-BACKEND.md).
 
-<p align="center">
-  <img src="images/zygisk-next-settings.png" width="320" alt="Zygisk Next settings: Denylist Policy set to Unmount Only, Use anonymous memory off, Use Zygisk Next linker on">
-</p>
+## Global compatibility option
 
-Configure Zygisk Next as shown above, or some apps — 360-hardened apps in
-particular — crash on launch:
+A systemless adaptation of the upstream boot script lives at `module/scripts/legacy-service.sh` and is **off by default**. It runs next boot only if both the master switch and `legacy_boot` are enabled. Its rules are fixed Lineage rules and do not follow the selected preset or custom entries.
 
-- **Denylist Policy**: `Unmount Only`, not `Enforce DenyList`;
-- **Use anonymous memory**: off;
-- **Use Zygisk Next linker**: on.
+This adaptation only rewrites runtime properties and bind-mounts command wrappers. Upstream system-partition edits, `build.prop` changes, Jelly disabling and duplicate SUSFS registration have been removed. App scopes do not limit these global actions. Disable and reboot to clear its runtime effects; historical disk/package modifications from an older upstream installation still require separate recovery. The adaptation still requires device validation.
 
-The module requests `FORCE_DENYLIST_UNMOUNT` to unmount mount points inside app
-processes, so these three settings need to stay consistent with it. See the
-compatibility note above for the recommended Zygisk Next build.
+Keep it disabled when first validating process-local filtering. Zygisk's own denylist policy must permit module loading; this module cannot override a manager that skips injection entirely.
 
-## Hidden channels
+## Persistent configuration
 
-| Channel | Mechanism |
-| --- | --- |
-| ServiceManager services | `BinderProxy.transactNative` JNI hook; enumeration and debug replies are filtered in the Parcel layer, direct app lookups are rewritten in a private request copy. Keywords: `lineage`, `crdroid`, `aospa`, `pixelexperience`, `omnirom`, `protonaosp`, plus the exact name `profile` |
-| Resource package | AssetManager name/ID lookups treat `lineageos.platform` (resource package id `0x3f`) as absent |
-| System features | `hasSystemFeature` requests are rewritten and the Parcel read path returns equal-length placeholders for the eight `org.lineageos.*` names |
-| Protected broadcasts | the ten lineage protected actions are replaced in a private copy of outbound `IActivityManager` requests |
-| Reflection constant | `AssetManager.LINEAGE_APK_PATH` is removed from `getDeclaredField`, `getField` and the `getDeclaredFields` family (AssetManager only) |
+Settings live in `/data/adb/lineage_hide/config.conf` (directory `0700`, file `0600`), outside the replaceable module directory. The root companion reads them for each new process. A shared native parser validates bounded, versioned data; writes use a synced temporary file and atomic rename. Configurations are never sourced as shell scripts.
 
-All in-process channels are always on, length-preserving, process-local and
-never write into Binder reply buffers.
+Import loads a validated draft; saving is explicit. Export validates the current draft and provides copyable text plus a download. Use text copying if a manager does not support Blob downloads; the saved file is also available to root file managers. Uninstall preserves configuration; back up and delete the state directory manually to remove it completely. Invalid configurations skip injection and are never silently broadened to all apps. WebUI recovery displays a default draft for review before saving. See [configuration format and CLI](docs/CONFIGURATION.md).
 
-## Injection scope
+## Build and verify
 
-There is no configuration.  The module injects a process when:
+Linux x86_64, NDK r27c / `27.2.12479018`, CMake, Ninja, Python 3, zip/unzip and readelf:
 
-1. its uid is an application uid (`>= 10000`), and
-2. its package is not a system package.
-
-`service.sh` records the system packages at every boot
-(`/data/adb/modules/lineage_hide/system_packages.txt`, generated from
-`pm list packages -s`), so only third-party applications are touched.  In the
-boot window before that list exists, a small hardcoded fallback protects
-SystemUI, Settings, the permission controller, core providers, core services
-and `org.lineageos.*` apps.  `FORCE_DENYLIST_UNMOUNT` is always requested.
-
-To exclude an app, freeze it from the module by adding its package to
-`system_packages.txt` (the file is regenerated on the next boot).
-
-## Boot integration (`service.sh`)
-
-After the boot animation starts, the module:
-
-1. hides the `pm` command: a wrapper is written to `/data/system/pm` and
-   bind-mounted over `/system/bin/pm` in init's mount namespace with
-   `nsenter -m -t 1`.  The wrapper forwards calls to `cmd package` and, for
-   application processes (uid >= 10000), rewrites `lineage` → `lineagx` and
-   `Lineage` → `Lineagx` in the output;
-2. hides the service list.  On a OnePlus 8T (`ro.product.model=KB2000`) it
-   remounts `/` read-write, backs up `/system/bin/service` as `service_` and
-   writes a wrapper whose `service list` output is a fixed 392-entry list.  On
-   every other device, or when the OnePlus path fails, it leaves the system
-   partition untouched: the original is copied to `/data/system/service_`, the
-   wrapper is written to `/data/system/service`, and the wrapper is
-   bind-mounted over `/system/bin/service` in init's mount namespace with
-   `nsenter -m -t 1`.  The OnePlus wrapper filters non-`list` output; the
-   generic wrapper filters all output, both with the length-preserving
-   `lineage` → `lineagx` rewrite;
-3. rewrites `userdebug` to `user` in the `build.prop` files of `/system`,
-   `/product/etc`, `/system_ext/etc` and `/system/system_dlkm/etc`, so the
-   device no longer advertises debug build information;
-4. spoofs bootloader and verified-boot properties: `ro.boot.flash.locked=1`,
-   `ro.boot.verifiedbootstate=green`, `ro.boot.vbmeta.device_state=locked`,
-   `ro.boot.vbmeta.avb_version`, `ro.boot.vbmeta.hash_alg`,
-   `ro.boot.vbmeta.size`, plus `ro.debuggable=0`, `ro.force.debuggable=0`,
-   `ro.secure=1`, `ro.adb.secure=1`, `ro.build.type=user`,
-   `ro.build.tags=release-keys`, a recovery `ro.bootmode` and
-   `init.svc.adb_root`, and sets `ro.config.ringtone` to `unknown`;
-5. deletes system properties whose name contains `lineage` and rewrites values
-   that contain `lineage`;
-6. disables `org.lineageos.jelly` and records the system package list used by
-   the injection scope above;
-7. enables the SUSFS `hide_sus_mnts_for_non_su_procs` and
-   `enable_avc_log_spoofing` switches, then walks `/data/resource-cache`,
-   `/system`, `/vendor`, `/system_ext` and `/product` for `*lineage*` and
-   `*gapps*` entries and registers them with `ksu_susfs add_sus_path`
-   (`add_sus_map` for regular files);
-8. registers additional paths and maps: `addon.d`, the LineageOS update
-   directory, SELinux policy files, the platform resource RRO and its idmaps,
-   the module's own native library and the Zygisk library.
-
-When SUSFS is provided as a kernel module (LKM), path/map registration uses
-`/proc/susfs_path` and `/proc/susfs_map` instead.
-
-The `pm` and service wrappers only rewrite output for application processes
-(uid >= 10000); root/shell still sees the original output.  The service-list
-step writes to the system partition only on OnePlus 8T; the generic bind-mount
-path never touches it.  Step 3 remounts each affected filesystem read-write and
-restores it read-only; where the filesystem cannot be remounted, the file edit
-has no effect, but the property spoofing in step 4 still covers the runtime
-values applications read.  Every step is idempotent and safe to repeat on the
-next boot.  Unlike the in-process hooks, the property rewrites and SUSFS
-registrations are global.
-
-## Kernel-side path hiding
-
-`scripts/patch-kernel.sh` applies the procfs complement to a kernel source
-tree: for application UIDs (>= 10000) the path strings printed by
-`/proc/<pid>/fd/*`, `/proc/<pid>/map_files/*`, `/proc/<pid>/maps`, `smaps` and
-`numa_maps` are rewritten so they never contain the ROM keywords.  The patcher
-is semantic (it locates functions, not line numbers) and idempotent, so trees
-with vendor or SUSFS modifications work as well:
-
-```bash
-scripts/patch-kernel.sh /path/to/kernel          # apply
-scripts/patch-kernel.sh --check /path/to/kernel  # status only
-scripts/patch-kernel.sh --revert /path/to/kernel # remove
+```sh
+bash scripts/build-native.sh /absolute/path/to/android-ndk-r27c
+# out/Lineage_Hide.zip
 ```
 
-It writes `include/linux/lineage_hide.h`, edits `do_proc_readlink()` in
-`fs/proc/base.c` and `seq_file_path()` in `fs/seq_file.c`, and backs up edited
-files as `*.lineage_hide.bak`.  Rebuild and flash the kernel afterwards; only
-the displayed string changes, file access and resource loading are untouched.
+The direct native build needs no Gradle, JDK or full SDK. The optional Gradle project also builds both targets; pass the directory containing `liblineage_hide.so` and `configctl` to `scripts/package.sh`. Only arm64 is packaged. API 26 is the minimum link target, not a tested Android compatibility guarantee.
 
-## KernelSU selinux_hide hardening
-
-`scripts/selinux_hide_patch.sh` hardens KernelSU's `selinux_hide` feature, the
-code that answers application selinuxfs queries from the policy copy captured
-at boot instead of the running (KernelSU-modified) policy.  With the feature
-enabled, the patcher adds three guards to `kernel/feature/selinux_hide.c` so
-the fallbacks return `-EINVAL` for privileged contexts when the caller is an
-application (uid >= 10000), instead of validating them:
-
-- `my_write_context()` (`/sys/fs/selinux/context`) rejects `u:r:adbroot:s0`;
-- `my_write_access()` (`/sys/fs/selinux/access`) rejects `u:r:shell:s0` +
-  `u:r:su:s0`, `u:r:fsck_untrusted:s0` and `u:r:adbroot:s0`;
-- `ksu_handle_selinux_setprocattr()` rejects `u:r:adbroot:s0`.
-
-These probes are used by environment detectors to confirm privileged domains
-(`su`, `adbroot`) behind the sanitized policy; refusing them keeps the answer
-negative no matter which policy the kernel really runs.  Root and shell
-processes are not affected.
-
-Like `patch-kernel.sh` the patcher is semantic (function anchors, not line
-numbers) and idempotent:
-
-```bash
-scripts/selinux_hide_patch.sh /path/to/kernel          # apply
-scripts/selinux_hide_patch.sh --check /path/to/kernel  # status only
-scripts/selinux_hide_patch.sh --revert /path/to/kernel # remove
+```sh
+export JNI_HEADER=/absolute/path/to/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/jni.h
+python3 -m unittest discover -s tests -v
+npm ci
+npx playwright install chromium
+npm test
+# Or CHROMIUM_PATH=/path/to/chromium npm test
 ```
 
-`<tree>` is the kernel source root (KernelSU cloned at `KernelSU/` and
-symlinked as `drivers/kernelsu`) or the KernelSU repo root itself.  The edited
-`kernel/feature/selinux_hide.c` is backed up as `*.selinux_hide.bak`; rebuild
-and flash the kernel afterwards.
+Host tests cover parser bounds, persistence, upgrades, app scope, multi-user UIDs, protected packages, invalid snapshots, companion framing and filtering. Native tests use ASan/UBSan. A fake JNI/Parcel harness executes the actual hook code for reply ownership, allocation failure, interface transaction collisions, broadcast encodings/extras, reflection scope and partial resource installation. The command-runner tests use a local fake executable to exercise output limits, timeouts and child cleanup. Boot-script tests isolate all device paths. These fixtures do not simulate Android Binder or ART internals. Browser integration runs the real host configuration tool behind a simulated KernelSU bridge, with a mocked app list. It does not substitute for [device validation](docs/DEVICE-VALIDATION.md).
 
-## Build
-
-Install Gradle 8.11.1, JDK 17 and the Android SDK/NDK.  The repository's
-`gradlew` delegates to Gradle on `PATH`.
-
-```bash
-./gradlew :module:assembleRelease
-bash scripts/package.sh
-```
-
-`v*` tags are built by GitHub Actions, which publishes `Lineage_Hide.zip` and
-updates the root `update.json` on `main`, so Magisk/KernelSU managers offer
-module updates from the repository's releases.
-
-## Verification
-
-Quick checks; the detailed checklist is in
-[README.zh-CN.md](README.zh-CN.md).
-
-- In a third-party app: `getSystemAvailableFeatures()` shows no
-  `org.lineageos.*` names, the `lineageos.platform` resource id `0x3f` is
-  absent, and `AssetManager.class.getDeclaredField("LINEAGE_APK_PATH")` throws
-  `NoSuchFieldException`.
-- In a system app (Settings, SystemUI, `org.lineageos.*`) all of the above must
-  still be visible, since those processes are never injected.
-- `pm list packages` in a third-party app shows no `lineage` entries (they
-  appear as `lineagx`), while root/shell still sees the original output;
-- `service list` contains no ROM-named services (on KB2000 it returns the
-  static 392-entry list), and root/shell still sees the original output.
-  `getprop ro.boot.flash.locked` is `1`, `ro.boot.verifiedbootstate` is
-  `green`, `ro.boot.vbmeta.device_state` is `locked`, `ro.build.type` is
-  `user`, `ro.debuggable` is `0` and `ro.config.ringtone` is `unknown`.
-- Douyin launches normally and passes its environment checks.
-- `logcat -s LineageHide` shows the hook installation lines; `service.sh`
-  output appears in the kernel/manager log.
-
-## Design notes
-
-- **Never write into a Binder reply Parcel.** A reply may be a data-reference
-  into the binder buffer; rewriting it in place caused `Parcel::writeInt32`
-  SIGSEGV in several apps.  Feature enumeration is replaced on the read side,
-  broadcasts and service lookups are rewritten in private request copies.
-- **Never close fds owned by the resource system.** The overlay/platform-res
-  fds inherited from zygote belong to `ZipArchive`; an external `close()`
-  triggers fdsan and SIGABRT.  The kernel patch covers their path exposure
-  instead.
-- **A module update requires a reboot.** Zygote keeps the module `.so` mapped;
-  hot-replacing a mapped file mixes old and new pages and crashes zygote.
-- **Native boundary.** The in-process hooks only cover Java/framework paths;
-  native libc scans, native-only Binder calls and `PendingIntent`-relayed
-  broadcasts are out of scope and need SUSFS plus the kernel patch.
-- **Keep the hiding surface small.** Every hook is another observable; the
-  native-ineffective list0/readlink hooks were removed and only working
-  channels remain.
-- **The OnePlus 8T service list is a fixed snapshot.** When a ROM update
-  changes the service set, the wrapper must be regenerated to match.
-- **Without SUSFS and the kernel patch**, native scanners can still observe ROM
-  files, mappings and properties from application processes.
-
-## Directory structure
-
-```
-module/                      Magisk/KernelSU module
-  module.prop                module identity (id=lineage_hide)
-  service.sh                 boot: pm/service scrubbing + bootloader spoofing + system package list + ksu_susfs registration
-  customize.sh               installer (permissions)
-  src/main/cpp/              Zygisk native code
-    entry.cpp                injection decision (uid + system package list) and specialization entry
-    binder_hook.{h,cpp}      ServiceManager BinderProxy JNI hook and filtering
-    service_filter.{h,cpp}   service name matching
-    service_cache.{h,cpp}    sCache cleanup
-    resource_hook.{h,cpp}    resource package hiding
-    feature_filter.{h,cpp}   system features
-    broadcast_filter.{h,cpp} protected broadcasts
-    reflection_filter.{h,cpp} LINEAGE_APK_PATH reflection
-    log.{h,cpp}              logging
-scripts/
-  package.sh                 package Lineage_Hide.zip
-  patch-kernel.sh            kernel procfs path scrubbing patch
-  selinux_hide_patch.sh      KernelSU selinux_hide privileged-context probe guards
-  verify_stealth.sh          ELF symbol and /proc maps helper checks (development)
-images/                      README screenshots (demo, settings)
-```
-
-## License
-
-Copyright (C) 2026 GitHub@null07089.
-
-This project is licensed under the GNU General Public License v3.0; see
-[LICENSE](LICENSE).
+Preview builds omit automatic updates to prevent replacement by an upstream release. Tagged builds use this fork's own update manifest. Original kernel patch helpers remain under `scripts/`; they are not configured by the WebUI.

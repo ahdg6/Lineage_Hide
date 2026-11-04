@@ -1,6 +1,6 @@
 #include "reflection_filter.h"
 
-#include <string>
+#include "jni_strings.h"
 
 #include "log.h"
 
@@ -26,35 +26,22 @@ void clear_jni_exception(JNIEnv *env) {
     if (env && env->ExceptionCheck()) env->ExceptionClear();
 }
 
-std::string jstring_to_ascii(JNIEnv *env, jstring value) {
-    if (!env || !value) return {};
-    const char *chars = env->GetStringUTFChars(value, nullptr);
-    if (!chars) {
-        clear_jni_exception(env);
-        return {};
-    }
-    try {
-        std::string out = chars;
-        env->ReleaseStringUTFChars(value, chars);
-        return out;
-    } catch (...) {
-        env->ReleaseStringUTFChars(value, chars);
-        return {};
-    }
+bool is_hidden_field_name(JNIEnv *env, jstring value) {
+    if (!env || !value) return false;
+    constexpr std::string_view hidden = kHiddenField;
+    const jsize length = env->GetStringLength(value);
+    if (env->ExceptionCheck()) { clear_jni_exception(env); return false; }
+    if (length != static_cast<jsize>(hidden.size())) return false;
+    char buffer[hidden.size()];
+    const bool match = lh::read_ascii(env, value, buffer, length) == hidden;
+    clear_jni_exception(env);
+    return match;
 }
 
-bool jstring_equals(JNIEnv *env, jstring value, const char *needle) {
-    if (!env || !value || !needle) return false;
-    return jstring_to_ascii(env, value) == needle;
-}
-
-// Filtering is scoped to AssetManager so unrelated reflection in target apps
-// is left alone.  When the class could not be resolved at install time the
-// filter falls back to name matching, keeping the fingerprint hidden at the
-// cost of touching every class.
+// Never broaden filtering if the AssetManager class cannot be resolved.
 bool is_asset_manager_class(JNIEnv *env, jobject clazz) {
     if (!env || !clazz) return false;
-    if (!g_asset_manager_class) return true;
+    if (!g_asset_manager_class) return false;
     return env->IsSameObject(clazz, g_asset_manager_class);
 }
 
@@ -66,7 +53,7 @@ bool field_is_hidden(JNIEnv *env, jobject field) {
         if (name) env->DeleteLocalRef(name);
         return false;
     }
-    const bool hidden = name && jstring_equals(env, name, kHiddenField);
+    const bool hidden = name && is_hidden_field_name(env, name);
     if (name) env->DeleteLocalRef(name);
     return hidden;
 }
@@ -82,6 +69,7 @@ jobjectArray filter_field_array(JNIEnv *env, jobjectArray fields) {
     jsize dropped = 0;
     for (jsize index = 0; index < length; ++index) {
         jobject field = env->GetObjectArrayElement(fields, index);
+        if (env->ExceptionCheck()) { clear_jni_exception(env); return fields; }
         if (!field) continue;
         if (field_is_hidden(env, field)) ++dropped;
         env->DeleteLocalRef(field);
@@ -125,7 +113,7 @@ jobjectArray filter_field_array(JNIEnv *env, jobjectArray fields) {
 
 jobject hook_get_declared_field(JNIEnv *env, jobject clazz, jstring name) {
     if (!g_original_get_declared_field) return nullptr;
-    if (is_asset_manager_class(env, clazz) && jstring_equals(env, name, kHiddenField)) {
+    if (is_asset_manager_class(env, clazz) && is_hidden_field_name(env, name)) {
         jclass exception = env->FindClass("java/lang/NoSuchFieldException");
         if (exception) env->ThrowNew(exception, kHiddenField);
         return nullptr;
@@ -136,7 +124,7 @@ jobject hook_get_declared_field(JNIEnv *env, jobject clazz, jstring name) {
 // Class.getField() turns a null result into NoSuchFieldException.
 jobject hook_get_public_field(JNIEnv *env, jobject clazz, jstring name) {
     if (!g_original_get_public_field) return nullptr;
-    if (is_asset_manager_class(env, clazz) && jstring_equals(env, name, kHiddenField)) {
+    if (is_asset_manager_class(env, clazz) && is_hidden_field_name(env, name)) {
         return nullptr;
     }
     return g_original_get_public_field(env, clazz, name);
@@ -179,11 +167,16 @@ bool install_field_hooks(JNIEnv *env, zygisk::Api *api) {
         clear_jni_exception(env);
     }
 
+    if (!g_asset_manager_class) {
+        log_error("AssetManager unavailable; reflection filtering skipped");
+        return false;
+    }
     jclass field_class = env->FindClass("java/lang/reflect/Field");
     if (field_class && !env->ExceptionCheck()) {
         g_field_get_name = env->GetMethodID(field_class, "getName", "()Ljava/lang/String;");
     }
     clear_jni_exception(env);
+    if (field_class) env->DeleteLocalRef(field_class);
 
     JNINativeMethod field_methods[] = {
         {"getDeclaredField", "(Ljava/lang/String;)Ljava/lang/reflect/Field;",
@@ -241,7 +234,6 @@ bool install_field_hooks(JNIEnv *env, zygisk::Api *api) {
 
     if (installed == 0) return false;
     g_field_hooks_installed = true;
-    log_info("LINEAGE_APK_PATH hidden from reflection (%d/5 hooks, scope=%s)", installed,
-             g_asset_manager_class ? "AssetManager" : "name-only");
+    log_debug("LINEAGE_APK_PATH hidden from AssetManager reflection (%d/5 hooks)", installed);
     return true;
 }

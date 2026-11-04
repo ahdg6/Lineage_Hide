@@ -1,4 +1,58 @@
-# 更新日志 / Changelog
+# Changelog
+
+## 3.0.0-preview.6
+
+- Retain O_PATH references before SUSFS registration and hand them to one idle keeper without a reference gap. This prevents ordinary eviction of the registered inodes while the keeper lives; no timed rescans, app-start loops or kernel patches are added.
+- Start native registration before PackageManager waits. Bound reference counts, reject symlinks/writable mounts, preserve partial receipts and prevent duplicate keepers. Add uninstall cleanup.
+- Separate historical registration counts, live reference health/configuration and unverified target-app visibility in the WebUI. Detect keeper loss and replaced path bindings; reboot remains required for rule changes.
+- Add ASan/UBSan lifetime, handoff, replacement, process-loss and IPC tests plus browser regressions. Device observations and remaining limitations are recorded in `docs/DEVICE-VALIDATION.md`.
+
+## 3.0.0-preview.5
+
+- Skip JNI inspection for unrelated Binder transaction IDs and one-way calls; retain descriptor validation for candidate IDs and preserve real Binder exceptions.
+- Match bounded JNI names using stack buffers instead of temporary native strings/pinned string copies. Resource-package and reflection names reject impossible lengths before extraction.
+- Skip hooks for empty/disabled channels, avoid companion access without a valid owning package, and unload when no process hooks are requested. Keep immutable configuration as the source of channel switches.
+- Reduce successful per-process setup logging to one line. Detailed setup logs are available with `-DLH_VERBOSE_LOGS=ON`; errors remain visible.
+- Remove unused `scripts/patch-kernel.sh` and `scripts/selinux_hide_patch.sh`. They were never packaged or run by this configurable module. Existing SUSFS rules, including the verified EvoX map rule, are unchanged.
+- Extend ASan/UBSan regressions for bypass paths, bounded string extraction/failure and empty channels. See `docs/PERFORMANCE.md` for runtime costs and limits; no measured battery-life claim is made.
+
+## 3.0.0-preview.4
+
+- Add `/product/overlay/Pixelframework-res.apk` to the EvoX preset's mapping list. This uses the existing SUSFS map adapter and does not hide the file path or unload resources.
+- A live single-rule test on Android 16/EvoX changed Duck 1099's `mapsInjection` from one three-device finding to Clean. Custom ROM became Info with no detected ROM/runtime/native signatures; the existing unavailable property-area probe still limits coverage.
+- Existing configurations remain untouched on upgrade. Add the map path manually or review/load the updated EvoX preset to adopt it.
+
+## 3.0.0-preview.3
+
+- Fix system-package snapshot creation under enforcing SELinux: capture `cmd package` output through a pipe instead of passing a private `/dev` output file to system_server.
+- Add a boot regression that rejects regular-file stdout on the mocked Binder command, reproducing the device failure.
+- Device check on Android 16 / EvoX with BakaSU/SUSFS 2.3.0: snapshot ready (495 packages), hooks active in Duck main/helper processes, package/service/reflection/native-file checks clean after repair.
+- Duck still reports one framework-resource mapping heuristic from existing ROM overlays/idmap; this release does not claim to remove that signal.
+
+## 3.0.0-preview.2
+
+- Copy Binder-owned service replies into writable Parcel storage before changing matched strings; skip edits if allocation fails.
+- Route Binder filtering by both transaction ID and interface descriptor, including colliding service/package/activity transaction IDs.
+- Parse broadcast arguments to rewrite only Intent.action; retain extras, feature IDs and normal broadcasts, and avoid copying unmatched requests.
+- Preserve original functions after partial resource-hook installation; precompute resource package IDs for constant-time lookup.
+- Skip reflection hooks if AssetManager cannot be resolved; reject configurations that normalize beyond 64 KiB.
+- Bound PackageManager boot/WebUI commands, check SUSFS command pipe setup, and avoid spinning when a child closes its output before exiting.
+- Add ASan/UBSan JNI hook and subprocess regressions, maximum-size configuration round trips and isolated boot-script tests.
+- Align both native binaries and their RELRO ranges for 16 KiB kernels; verify alignment during every direct/CI build.
+- Android device validation remains pending; this is an arm64 test build.
+
+## 3.0.0-preview.1
+
+- Add an offline KernelSU WebUI with editable LineageOS and Evolution X presets.
+- Add all / include / exclude package scope, current-user app selection, channel toggles, configuration import/export and atomic persistent saves.
+- Read validated configuration through a Zygisk root companion at process startup; skip injection on missing/invalid configuration or system-package snapshot.
+- Preserve original Parcel names during internal Binder inspection so feature request filtering is not masked by the module's own read hook.
+- Support custom service keywords/names, feature names, broadcasts and resource package names/IDs; retain the fixed LINEAGE_APK_PATH reflection filter as a toggle.
+- Add a bounded native BakaSU/SUSFS 2.3.0 path adapter, editable path presets, read-only draft preview and partial-failure status. Kernel path marks remain independent of app scopes.
+- Retain runtime property and command-wrapper compatibility as an explicit default-off option; remove upstream partition edits and package disabling. Package scopes do not affect global actions or kernel rules.
+- Add native parser/scope/transport/storage tests, browser-to-native configuration integration tests, and a direct NDK build/package path.
+- Preview: Android compilation and host/browser tests do not establish device injection or ROM compatibility. Do not treat this as a hardware-validated release.
+
 
 ## 2.1
 

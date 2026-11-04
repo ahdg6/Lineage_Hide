@@ -1,21 +1,9 @@
 #include "service_filter.h"
+#include "config.h"
 
 #include <cstring>
 
 namespace {
-constexpr const char *kKeywords[] = {
-    "lineage",
-    "crdroid",
-    "aospa",
-    "pixelexperience",
-    "omnirom",
-    "protonaosp",
-};
-
-constexpr const char *kExactServices[] = {
-    "profile",
-};
-
 char ascii_lower(char c) {
     return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + ('a' - 'A')) : c;
 }
@@ -24,7 +12,7 @@ bool equals_ci(std::string_view value, const char *needle) {
     if (!needle) return false;
     std::size_t i = 0;
     for (; needle[i] != '\0'; ++i) {
-        if (i >= value.size() || ascii_lower(value[i]) != needle[i]) return false;
+        if (i >= value.size() || ascii_lower(value[i]) != ascii_lower(needle[i])) return false;
     }
     return i == value.size();
 }
@@ -45,12 +33,13 @@ bool contains_ci(std::string_view value, const char *needle) {
 } // namespace
 
 bool hide_service(std::string_view service_name) {
-    for (const char *service : kExactServices) {
-        if (equals_ci(service_name, service)) return true;
+    if (!lh::active_config().services) return false;
+    for (const auto &service : lh::active_config().exact_services) {
+        if (equals_ci(service_name, service.c_str())) return true;
     }
 
-    for (const char *keyword : kKeywords) {
-        if (contains_ci(service_name, keyword)) return true;
+    for (const auto &keyword : lh::active_config().service_keywords) {
+        if (contains_ci(service_name, keyword.c_str())) return true;
     }
     return false;
 }

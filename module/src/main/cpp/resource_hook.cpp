@@ -1,16 +1,13 @@
 #include "resource_hook.h"
+#include "config.h"
+#include "jni_strings.h"
+#include <algorithm>
 
 #include <cstdint>
-#include <cstring>
 
 #include "log.h"
 
 namespace {
-// LineageOS builds its platform SDK resource APK with
-// --allow-reserved-package-id --package-id 63 (0x3f).
-constexpr jint kLineageResourcePackageId = 0x3f;
-constexpr const char *kLineageResourcePackage = "lineageos.platform";
-
 using GetResourceIdentifierFn = jint (*)(JNIEnv *, jclass, jlong, jstring, jstring, jstring);
 using GetResourceValueFn = jint (*)(JNIEnv *, jclass, jlong, jint, jshort, jobject, jboolean);
 using GetResourceNameFn = jstring (*)(JNIEnv *, jclass, jlong, jint);
@@ -24,19 +21,23 @@ GetResourceNameFn g_original_entry_name = nullptr;
 bool g_resource_hook_installed = false;
 
 bool is_lineage_resource_id(jint res_id) {
-    return (static_cast<uint32_t>(res_id) >> 24) == static_cast<uint32_t>(kLineageResourcePackageId);
+    return lh::resource_id_matches(static_cast<uint32_t>(res_id));
 }
 
 bool is_lineage_def_package(JNIEnv *env, jstring def_package) {
     if (!env || !def_package) return false;
-    const char *chars = env->GetStringUTFChars(def_package, nullptr);
-    if (!chars) {
-        if (env->ExceptionCheck()) env->ExceptionClear();
+    const auto &packages = lh::active_config().resource_packages;
+    if (packages.empty()) return false;
+    const jsize length = env->GetStringLength(def_package);
+    if (env->ExceptionCheck()) { env->ExceptionClear(); return false; }
+    if (length <= 0 || !lh::resource_package_length_matches(static_cast<size_t>(length))) return false;
+    char buffer[255];
+    const auto name = lh::read_ascii(env, def_package, buffer, length);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
         return false;
     }
-    const bool match = std::strcmp(chars, kLineageResourcePackage) == 0;
-    env->ReleaseStringUTFChars(def_package, chars);
-    return match;
+    return std::find(packages.begin(), packages.end(), name) != packages.end();
 }
 
 // Every successful native hook takes the original function pointer; a null or
@@ -84,6 +85,7 @@ jstring hook_get_resource_entry_name(JNIEnv *env, jclass clazz, jlong ptr, jint 
 
 bool install_resource_hook(JNIEnv *env, zygisk::Api *api) {
     if (g_resource_hook_installed) return true;
+    if (!lh::active_config().has_resource_rules()) return false;
     if (!env || !api) return false;
 
     JNINativeMethod methods[] = {
@@ -107,10 +109,6 @@ bool install_resource_hook(JNIEnv *env, zygisk::Api *api) {
         took_original(methods[0].fnPtr, reinterpret_cast<void *>(hook_get_resource_identifier));
     const bool value_ready =
         took_original(methods[1].fnPtr, reinterpret_cast<void *>(hook_get_resource_value));
-    if (!identifier_ready && !value_ready) {
-        log_error("AssetManager resource hook unavailable; lineage resources stay visible");
-        return false;
-    }
     if (identifier_ready) {
         g_original_identifier = reinterpret_cast<GetResourceIdentifierFn>(methods[0].fnPtr);
     }
@@ -134,8 +132,15 @@ bool install_resource_hook(JNIEnv *env, zygisk::Api *api) {
         g_original_entry_name = reinterpret_cast<GetResourceNameFn>(methods[5].fnPtr);
     }
 
-    g_resource_hook_installed = true;
-    log_info("AssetManager resource hook installed; lineageos.platform (0x3f) hidden "
+    // Even a names-only partial installation must retain its originals.
+    // Otherwise those installed callbacks would return null for every resource.
+    g_resource_hook_installed = identifier_ready || value_ready || g_original_name ||
+        g_original_package_name || g_original_type_name || g_original_entry_name;
+    if (!g_resource_hook_installed) {
+        log_error("AssetManager resource hook unavailable; resources stay visible");
+        return false;
+    }
+    log_debug("AssetManager resource hook installed; configured resource packages hidden "
              "(identifier=%d value=%d name=%d)",
              identifier_ready ? 1 : 0, value_ready ? 1 : 0, g_original_name ? 1 : 0);
     return true;
